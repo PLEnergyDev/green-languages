@@ -1,4 +1,4 @@
-name: Testing Rust
+name: Testing
 language: c
 description: |
     My own description
@@ -21,4 +21,7 @@ code: |
         run_benchmark(argc, argv);
         return 0;
     }
-runtime_options: [20]
+---
+stdin: !!binary |
+    SGVsbG8gZXZlcnlvbmUsIGl0J3MgbWUK
+arguments: [20]

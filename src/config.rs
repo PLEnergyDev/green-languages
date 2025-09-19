@@ -12,7 +12,7 @@ impl Config {
         let base_dir = env::var("BASE_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| env::current_dir().unwrap());
-        Ok(Config{base_dir})
+        Ok(Config { base_dir })
     }
 
     pub fn global() -> &'static Config {
