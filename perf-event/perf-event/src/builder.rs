@@ -292,6 +292,32 @@ impl<'a> Builder<'a> {
         self
     }
 
+    /// Place the RAPL counter in the given RAPL [`Group`]. RAPL groups allow a set of
+    /// RAPL energy counters to be enabled, disabled, or read as a single atomic operation,
+    /// so that energy measurements across different domains (PKG, CORES, DRAM, etc.) can
+    /// be accurately compared.
+    ///
+    /// This method configures the counter with RAPL-specific attributes required for
+    /// kernel grouping on top of the base group functionality.
+    ///
+    /// [`Group`]: struct.Group.html
+    pub fn group_rapl(mut self, group: &'a mut Group) -> Builder<'a> {
+        // First apply base group settings
+        self = self.group(group);
+
+        // Then add RAPL-specific attributes required for successful grouping
+        self.attrs.set_inherit(1);
+        self.attrs.sample_type = sys::bindings::PERF_SAMPLE_IDENTIFIER as u64;
+
+        // Ensure member has same read format as RAPL group leader
+        self.attrs.read_format = (sys::bindings::PERF_FORMAT_TOTAL_TIME_ENABLED
+            | sys::bindings::PERF_FORMAT_TOTAL_TIME_RUNNING
+            | sys::bindings::PERF_FORMAT_ID
+            | sys::bindings::PERF_FORMAT_GROUP) as u64;
+
+        self
+    }
+
     /// Set the fields to include when reading from the counter.
     ///
     /// Note that this method is _not_ additive, unlike [`sample`].
@@ -817,6 +843,12 @@ impl<'a> Builder<'a> {
         self.attrs.aux_sample_size = sample_size;
         self
     }
+
+    /// Monitor any process with FD_CLOEXEC flag (needed for RAPL grouping compatibility).
+    pub fn any_pid_cloexec(mut self) -> Builder<'a> {
+        self.who = EventPid::AnyWithCloexec;
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -832,6 +864,9 @@ enum EventPid<'a> {
 
     /// Monitor any process on some given CPU.
     Any,
+
+    /// Monitor any process with FD_CLOEXEC flag (for RAPL compatibility).
+    AnyWithCloexec,
 }
 
 impl<'a> EventPid<'a> {
@@ -842,6 +877,7 @@ impl<'a> EventPid<'a> {
             EventPid::ThisProcess => (0, 0),
             EventPid::Other(pid) => (*pid, 0),
             EventPid::CGroup(file) => (file.as_raw_fd(), sys::bindings::PERF_FLAG_PID_CGROUP),
+            EventPid::AnyWithCloexec => (-1, sys::bindings::PERF_FLAG_FD_CLOEXEC),
         }
     }
 }

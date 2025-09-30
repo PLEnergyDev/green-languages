@@ -1,6 +1,4 @@
 use clap::Args;
 
 #[derive(Args)]
-pub struct ReportArgs {
-
-}
+pub struct ReportArgs {}

@@ -34,8 +34,8 @@
 #![allow(non_camel_case_types)]
 use bitflags::bitflags;
 use perf_event_open_sys::bindings;
-use std::io;
 use std::fs::read_to_string;
+use std::io;
 use std::path::Path;
 
 /// Any sort of event. This is a sum of the [`Hardware`],
@@ -60,7 +60,7 @@ pub enum Event {
     Breakpoint(Breakpoint),
 
     #[allow(missing_docs)]
-    Rapl(Rapl)
+    Rapl(Rapl),
 }
 
 impl Event {
@@ -102,7 +102,7 @@ impl Event {
                 // RAPL events require special handling via sysfs discovery
                 // The actual type and config values are determined dynamically
                 // based on the system's available PMU events
-                attr.type_ = rapl.get_pmu_type();
+                attr.type_ = Rapl::get_pmu_type();
                 attr.config = rapl.get_config();
                 attr.set_exclude_kernel(0);
                 attr.set_exclude_hv(0);
@@ -525,14 +525,22 @@ pub enum Rapl {
     /// Integrated GPU energy.
     GPU,
     /// Overall system energy.
-    PSYS
+    PSYS,
 }
 
 impl Rapl {
     fn read_sysfs_file(&self, filename: &str) -> io::Result<String> {
         let paths = [
-            format!("/sys/bus/event_source/devices/power/events/{}{}", self.event_name(), filename),
-            format!("/sys/devices/power/events/{}{}", self.event_name(), filename),
+            format!(
+                "/sys/bus/event_source/devices/power/events/{}{}",
+                self.event_name(),
+                filename
+            ),
+            format!(
+                "/sys/devices/power/events/{}{}",
+                self.event_name(),
+                filename
+            ),
         ];
 
         for path in &paths {
@@ -543,27 +551,29 @@ impl Rapl {
 
         Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("RAPL {} file not found for {}", filename, self.event_name())
+            format!("RAPL {} file not found for {}", filename, self.event_name()),
         ))
     }
 
     fn get_energy_unit(&self) -> io::Result<f64> {
         let scale_str = self.read_sysfs_file(".scale")?;
-        scale_str.trim().parse::<f64>()
-            .map_err(|_| io::Error::new(
+        scale_str.trim().parse::<f64>().map_err(|_| {
+            io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Invalid scale factor for {}", self.event_name())
-            ))
+                format!("Invalid scale factor for {}", self.event_name()),
+            )
+        })
     }
 
-    fn get_config(&self) -> u64 {
+    /// Gets the RAPL event configuration value for perf_event_open().
+    /// Reads from sysfs if available, otherwise uses hardcoded fallback values.
+    pub fn get_config(&self) -> u64 {
         if let Ok(contents) = self.read_sysfs_file("") {
             // Parse the config value from sysfs (format: "event=0x01")
             if let Some(config_str) = contents.split('=').nth(1) {
-                if let Ok(config) = u64::from_str_radix(
-                    config_str.trim().trim_start_matches("0x"),
-                    16
-                ) {
+                if let Ok(config) =
+                    u64::from_str_radix(config_str.trim().trim_start_matches("0x"), 16)
+                {
                     return config;
                 }
             }
@@ -579,7 +589,9 @@ impl Rapl {
         }
     }
 
-    fn get_pmu_type(&self) -> u32 {
+    /// Gets the PMU type ID for RAPL events from sysfs.
+    /// Returns the type needed for perf_event_attr.type field.
+    pub fn get_pmu_type() -> u32 {
         let type_paths = [
             "/sys/bus/event_source/devices/power/type",
             "/sys/devices/power/type",
@@ -603,7 +615,7 @@ impl Rapl {
             Rapl::PKG => "energy-pkg",
             Rapl::DRAM => "energy-ram",
             Rapl::GPU => "energy-gpu",
-            Rapl::PSYS => "energy-psys"
+            Rapl::PSYS => "energy-psys",
         }
     }
 

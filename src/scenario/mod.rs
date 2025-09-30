@@ -80,12 +80,16 @@ impl Scenario {
         self.test_path(test).join(&self.language.source_file())
     }
 
-    pub fn input_path(&self, test: &Test) -> PathBuf {
-        self.test_path(test).join("input.txt")
+    pub fn stdin_path(&self, test: &Test) -> PathBuf {
+        self.test_path(test).join("stdin.txt")
     }
 
-    pub fn output_path(&self, test: &Test) -> PathBuf {
-        self.test_path(test).join("output.txt")
+    pub fn stdout_path(&self, test: &Test) -> PathBuf {
+        self.test_path(test).join("stdout.txt")
+    }
+
+    pub fn expected_stdout_path(&self, test: &Test) -> PathBuf {
+        self.test_path(test).join("expected_stdout.txt")
     }
 
     pub fn build_test_command(&self, test: &Test) -> Vec<String> {
@@ -120,7 +124,7 @@ impl Scenario {
         if command.is_empty() {
             return Err(ScenarioError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "No build command available for this language",
+                "Build command not available for this language",
             )));
         }
 
@@ -129,24 +133,24 @@ impl Scenario {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()?;
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or_default();
+        let out = String::from_utf8_lossy(&output.stdout).to_string();
+        let err = String::from_utf8_lossy(&output.stderr).to_string();
 
         if output.status.success() {
             if let Some(ref stdin_data) = test.stdin.take() {
-                fs::write(self.input_path(&test), stdin_data)?;
+                fs::write(self.stdin_path(&test), stdin_data)?;
             }
-            Ok(ScenarioResult::success_full(stdout, stderr))
+            if let Some(ref expected_stdout_data) = test.expected_stdout.take() {
+                fs::write(self.expected_stdout_path(&test), expected_stdout_data)?;
+            }
+            Ok(ScenarioResult::Success { out, err })
         } else {
-            Ok(ScenarioResult::failed_full(
-                output.status.code(),
-                stdout,
-                stderr,
-            ))
+            Ok(ScenarioResult::Failed { exit_code, err })
         }
     }
 
-    pub fn execute_test_command(&self, test: &Test) -> Vec<String> {
+    pub fn exec_test_command(&self, test: &Test) -> Vec<String> {
         let target_path = self.target_path(test).to_string_lossy().to_string();
         let mut command = match self.language {
             Language::C => vec![target_path],
@@ -163,21 +167,21 @@ impl Scenario {
         command
     }
 
-    pub fn execute_test(&self, test: &Test) -> Result<ScenarioResult, ScenarioError> {
-        let command = self.execute_test_command(&test);
+    pub fn exec_test(&self, test: &Test) -> Result<ScenarioResult, ScenarioError> {
+        let command = self.exec_test_command(&test);
         if command.is_empty() {
             return Err(ScenarioError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "No execution command available for this language",
+                "Run command not available for this language",
             )));
         }
 
-        let output_path = self.output_path(&test);
-        let output_file = File::create(&output_path)?;
+        let stdout_path = self.stdout_path(&test);
+        let output_file = File::create(&stdout_path)?;
 
         let stdin_config = if test.stdin.is_some() {
-            let input_path = self.input_path(&test);
-            let input_file = File::open(&input_path)?;
+            let stdin_path = self.stdin_path(&test);
+            let input_file = File::open(&stdin_path)?;
             Stdio::from(input_file)
         } else {
             Stdio::null()
@@ -191,18 +195,39 @@ impl Scenario {
             .spawn()?;
 
         let output = child.wait_with_output()?;
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or_default();
+        let err = String::from_utf8_lossy(&output.stderr).to_string();
 
         if output.status.success() {
             Ok(ScenarioResult::success())
         } else {
-            Ok(ScenarioResult::failed_full(
-                output.status.code(),
-                "".to_string(),
-                stderr,
-            ))
+            Ok(ScenarioResult::Failed { exit_code, err })
         }
     }
 
-    // pub fn verify_test(&self, test: &Test) -> Result<ScenarioResult, ScenarioError> {}
+    pub fn verify_test(&self, test: &Test) -> Result<ScenarioResult, ScenarioError> {
+        let expected_stdout_path = self.expected_stdout_path(test);
+        if !expected_stdout_path.exists() {
+            return Ok(ScenarioResult::success());
+        }
+
+        let stdout_path = self.stdout_path(test);
+        let actual_output =
+            std::fs::read_to_string(&stdout_path).map_err(|e| ScenarioError::Io(e))?;
+        let expected_output =
+            std::fs::read_to_string(&expected_stdout_path).map_err(|e| ScenarioError::Io(e))?;
+
+        if actual_output.trim() == expected_output.trim() {
+            Ok(ScenarioResult::success())
+        } else {
+            Ok(ScenarioResult::Failed {
+                exit_code: 1,
+                err: format!(
+                    "Output Mismatch\nExpected: {}\nActual: {}",
+                    expected_output.trim(),
+                    actual_output.trim()
+                ),
+            })
+        }
+    }
 }

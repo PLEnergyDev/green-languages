@@ -114,6 +114,7 @@ use hooks::sys;
 
 pub use crate::builder::Builder;
 pub use crate::counter::Counter;
+use crate::events::Rapl;
 pub use crate::flags::{Clock, ReadFormat, SampleBranchFlag, SampleSkid};
 
 /// A group of counters that can be managed as a unit.
@@ -365,6 +366,53 @@ impl Group {
         })
     }
 
+    /// Construct a new Group specifically designed for RAPL events.
+    ///
+    /// This creates a group using a RAPL PKG event as the leader instead of
+    /// the default software dummy event, allowing RAPL events to be grouped together.
+    pub fn rapl(leader: Rapl) -> io::Result<Group> {
+        let mut attrs = perf_event_attr {
+            size: std::mem::size_of::<perf_event_attr>() as u32,
+            type_: Rapl::get_pmu_type(),
+            config: leader.get_config(),
+            sample_type: sys::bindings::PERF_SAMPLE_IDENTIFIER as u64,
+            ..perf_event_attr::default()
+        };
+
+        attrs.set_disabled(1);
+        attrs.set_inherit(1);
+        attrs.set_exclude_kernel(0);
+        attrs.set_exclude_hv(0);
+        attrs.set_exclude_idle(0);
+
+        attrs.read_format = (sys::bindings::PERF_FORMAT_TOTAL_TIME_ENABLED
+            | sys::bindings::PERF_FORMAT_TOTAL_TIME_RUNNING
+            | sys::bindings::PERF_FORMAT_ID
+            | sys::bindings::PERF_FORMAT_GROUP) as u64;
+
+        let file = unsafe {
+            File::from_raw_fd(check_errno_syscall(|| {
+                sys::perf_event_open(
+                    &mut attrs,
+                    -1,
+                    0,
+                    -1,
+                    sys::bindings::PERF_FLAG_FD_CLOEXEC as std::os::raw::c_ulong,
+                )
+            })?)
+        };
+
+        // Retrieve the ID the kernel assigned us
+        let mut id = 0_u64;
+        check_errno_syscall(|| unsafe { sys::ioctls::ID(file.as_raw_fd(), &mut id) })?;
+
+        Ok(Group {
+            file,
+            id,
+            max_members: 1,
+        })
+    }
+
     /// Allow all `Counter`s in this `Group` to begin counting their designated
     /// events, as a single atomic operation.
     ///
@@ -581,6 +629,17 @@ impl Counts {
     /// counter's value.
     pub fn iter<'a>(&'a self) -> CountsIter<'a> {
         <&'a Counts as IntoIterator>::into_iter(self)
+    }
+
+    /// Iterate over all counts, including the group leader.
+    ///
+    /// This is useful for RAPL groups where the leader is a real measurement
+    /// (e.g., PKG energy) rather than a dummy software event.
+    pub fn iter_all(&self) -> CountsIter<'_> {
+        CountsIter {
+            counts: self,
+            next: 0, // Include the first entry (group leader)
+        }
     }
 }
 
