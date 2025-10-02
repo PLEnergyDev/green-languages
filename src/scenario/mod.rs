@@ -1,17 +1,20 @@
 pub mod error;
 pub mod result;
+pub mod test;
+pub mod util;
 
 use crate::config::Config;
 use crate::language::Language;
-use crate::scenario::error::ScenarioError;
-use crate::scenario::result::ScenarioResult;
-use crate::test::Test;
+use error::ScenarioError;
+use result::ScenarioResult;
 use serde::{Deserialize, Serialize};
 use serde_yml::Deserializer;
 use std::fs::{self, File};
-use std::io::BufReader;
+use std::io::{BufReader, Error, ErrorKind, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use test::Test;
+use util::CommandEnvExt;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Scenario {
@@ -36,8 +39,8 @@ impl TryFrom<&Path> for Scenario {
         let reader = BufReader::new(file);
         let mut deserializer = Deserializer::from_reader(reader);
         let first_doc = deserializer.next().ok_or_else(|| {
-            ScenarioError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
+            ScenarioError::Io(Error::new(
+                ErrorKind::InvalidData,
                 "No scenario document found in file",
             ))
         })?;
@@ -57,7 +60,7 @@ impl TryFrom<&str> for Scenario {
 }
 
 impl Scenario {
-    pub fn scenario_path(&self) -> PathBuf {
+    fn scenario_path(&self) -> PathBuf {
         let code_origin = self.code_origin.as_deref().unwrap_or("human");
         Config::global()
             .base_dir
@@ -67,34 +70,34 @@ impl Scenario {
             .join(&self.name)
     }
 
-    pub fn test_path(&self, test: &Test) -> PathBuf {
+    fn test_path(&self, test: &Test) -> PathBuf {
         let test_id = test.id.as_ref().expect("Test has no id");
         self.scenario_path().join(test_id)
     }
 
-    pub fn target_path(&self, test: &Test) -> PathBuf {
-        self.test_path(test).join(&self.language.target_file())
+    fn target_path(&self) -> PathBuf {
+        self.scenario_path().join(&self.language.target_file())
     }
 
-    pub fn source_path(&self, test: &Test) -> PathBuf {
-        self.test_path(test).join(&self.language.source_file())
+    fn source_path(&self) -> PathBuf {
+        self.scenario_path().join(&self.language.source_file())
     }
 
-    pub fn stdin_path(&self, test: &Test) -> PathBuf {
+    fn stdin_path(&self, test: &Test) -> PathBuf {
         self.test_path(test).join("stdin.txt")
     }
 
-    pub fn stdout_path(&self, test: &Test) -> PathBuf {
+    fn stdout_path(&self, test: &Test) -> PathBuf {
         self.test_path(test).join("stdout.txt")
     }
 
-    pub fn expected_stdout_path(&self, test: &Test) -> PathBuf {
+    fn expected_stdout_path(&self, test: &Test) -> PathBuf {
         self.test_path(test).join("expected_stdout.txt")
     }
 
-    pub fn build_test_command(&self, test: &Test) -> Vec<String> {
-        let target_path = self.target_path(&test).to_string_lossy().to_string();
-        let source_path = self.source_path(&test).to_string_lossy().to_string();
+    fn build_test_command(&self, test: &Test) -> Vec<String> {
+        let target_path = self.target_path().to_string_lossy().to_string();
+        let source_path = self.source_path().to_string_lossy().to_string();
         let mut command = match self.language {
             Language::C => vec![
                 "gcc".to_string(),
@@ -102,34 +105,35 @@ impl Scenario {
                 "-o".to_string(),
                 target_path,
                 "-w".to_string(),
+                "-literations".to_string(),
             ],
         };
 
         if let Some(ref options) = test.compile_options {
             command.extend_from_slice(options);
         }
-
         command
     }
 
     pub fn build_test(&self, test: &mut Test) -> Result<ScenarioResult, ScenarioError> {
         let code = self.code.as_ref().ok_or(ScenarioError::MissingCode)?;
-        let source_path = self.source_path(&test);
-        if let Some(parent) = source_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        let test_path = self.test_path(&test);
+        let source_path = self.source_path();
+        fs::create_dir_all(&test_path)?;
         fs::write(&source_path, code)?;
 
         let command = self.build_test_command(&test);
         if command.is_empty() {
-            return Err(ScenarioError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Build command not available for this language",
+            let err_msg = format!("Build command not available for {}", self.language);
+            return Err(ScenarioError::Io(Error::new(
+                ErrorKind::InvalidInput,
+                err_msg,
             )));
         }
 
         let output = Command::new(&command[0])
             .args(&command[1..])
+            .with_iter_signal_env()
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()?;
@@ -150,8 +154,8 @@ impl Scenario {
         }
     }
 
-    pub fn exec_test_command(&self, test: &Test) -> Vec<String> {
-        let target_path = self.target_path(test).to_string_lossy().to_string();
+    fn exec_test_command(&self, test: &Test) -> Vec<String> {
+        let target_path = self.target_path().to_string_lossy().to_string();
         let mut command = match self.language {
             Language::C => vec![target_path],
         };
@@ -167,18 +171,18 @@ impl Scenario {
         command
     }
 
-    pub fn exec_test(&self, test: &Test) -> Result<ScenarioResult, ScenarioError> {
+    pub fn exec_test_async(&self, test: &Test) -> Result<Child, ScenarioError> {
         let command = self.exec_test_command(&test);
         if command.is_empty() {
-            return Err(ScenarioError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Run command not available for this language",
+            let err_msg = format!("Exec command not available for {}", self.language);
+            return Err(ScenarioError::Io(Error::new(
+                ErrorKind::InvalidInput,
+                err_msg,
             )));
         }
 
         let stdout_path = self.stdout_path(&test);
         let output_file = File::create(&stdout_path)?;
-
         let stdin_config = if test.stdin.is_some() {
             let stdin_path = self.stdin_path(&test);
             let input_file = File::open(&stdin_path)?;
@@ -189,11 +193,17 @@ impl Scenario {
 
         let child = Command::new(&command[0])
             .args(&command[1..])
+            .with_iter_signal_env()
             .stdout(Stdio::from(output_file))
             .stderr(Stdio::piped())
             .stdin(stdin_config)
             .spawn()?;
 
+        Ok(child)
+    }
+
+    pub fn exec_test(&self, test: &Test) -> Result<ScenarioResult, ScenarioError> {
+        let child = self.exec_test_async(test)?;
         let output = child.wait_with_output()?;
         let exit_code = output.status.code().unwrap_or_default();
         let err = String::from_utf8_lossy(&output.stderr).to_string();
@@ -205,29 +215,59 @@ impl Scenario {
         }
     }
 
-    pub fn verify_test(&self, test: &Test) -> Result<ScenarioResult, ScenarioError> {
+    pub fn verify_test(
+        &self,
+        test: &Test,
+        iterations: usize,
+    ) -> Result<ScenarioResult, ScenarioError> {
         let expected_stdout_path = self.expected_stdout_path(test);
         if !expected_stdout_path.exists() {
             return Ok(ScenarioResult::success());
         }
 
         let stdout_path = self.stdout_path(test);
-        let actual_output =
-            std::fs::read_to_string(&stdout_path).map_err(|e| ScenarioError::Io(e))?;
-        let expected_output =
-            std::fs::read_to_string(&expected_stdout_path).map_err(|e| ScenarioError::Io(e))?;
+        let expected = std::fs::read(&expected_stdout_path)?;
+        let expected_len = expected.len();
+        let file = File::open(&stdout_path)?;
+        let mut reader = BufReader::new(file);
+        let mut buffer = vec![0u8; expected_len];
 
-        if actual_output.trim() == expected_output.trim() {
-            Ok(ScenarioResult::success())
-        } else {
-            Ok(ScenarioResult::Failed {
+        for i in 0..iterations {
+            match reader.read_exact(&mut buffer) {
+                Ok(_) => {
+                    if buffer != expected {
+                        return Ok(ScenarioResult::Failed {
+                            exit_code: 1,
+                            err: format!(
+                                "test '{}' got unexpected stdout for iteration {}: content unequal",
+                                test.id.as_ref().unwrap_or(&"unknown".to_string()),
+                                i + 1
+                            ),
+                        });
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                    return Ok(ScenarioResult::Failed {
+                        exit_code: 1,
+                        err: format!(
+                            "test '{}' got unexpected stdout for iteration {}: output too short",
+                            test.id.as_ref().unwrap_or(&"unknown".to_string()),
+                            i + 1
+                        ),
+                    });
+                }
+                Err(e) => return Err(ScenarioError::Io(e)),
+            }
+        }
+
+        let mut extra = [0u8; 1];
+        match reader.read(&mut extra) {
+            Ok(0) => Ok(ScenarioResult::success()),
+            Ok(_) => Ok(ScenarioResult::Failed {
                 exit_code: 1,
-                err: format!(
-                    "Output Mismatch\nExpected: {}\nActual: {}",
-                    expected_output.trim(),
-                    actual_output.trim()
-                ),
-            })
+                err: "test has more output than expected".to_string(),
+            }),
+            Err(e) => Err(ScenarioError::Io(e)),
         }
     }
 }

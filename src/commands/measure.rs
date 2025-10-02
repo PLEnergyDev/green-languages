@@ -1,9 +1,11 @@
 use crate::scenario::result::ScenarioResult;
+use crate::scenario::test::Test;
 use crate::scenario::Scenario;
-use crate::test::Test;
 use clap::Args;
 use csv::WriterBuilder;
-use log::{debug, error, info, warn};
+use iterations::share::cleanup_shared_memory;
+use iterations::signal::*;
+use log::{error, info, warn};
 use perf_event::events::Rapl;
 use perf_event::{Builder, Counter, Group};
 use serde::Serialize;
@@ -48,7 +50,27 @@ struct Measurement {
     gpu: Option<f64>,
     dram: Option<f64>,
     psys: Option<f64>,
+    iteration: usize,
     timestamp: i64,
+}
+
+impl Measurement {
+    fn write_to_csv(&self, output_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        let file_exists = output_path.exists();
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(output_path)?;
+        let mut wtr = WriterBuilder::new()
+            .has_headers(!file_exists)
+            .from_writer(file);
+
+        wtr.serialize(self)?;
+        wtr.flush()?;
+
+        Ok(())
+    }
 }
 
 struct Counters {
@@ -136,22 +158,12 @@ impl Counters {
 
         Ok(())
     }
-    fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.group.reset().map_err(Into::into)
-    }
-
-    fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.group.enable().map_err(Into::into)
-    }
-
-    fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.group.disable().map_err(Into::into)
-    }
 
     fn read_measurements(
         &mut self,
         scenario_name: &str,
         test_id: &str,
+        iteration: usize,
     ) -> Result<Measurement, Box<dyn std::error::Error>> {
         let counts = self.group.read()?;
         let timestamp = chrono::Utc::now().timestamp();
@@ -164,6 +176,7 @@ impl Counters {
             gpu: None,
             dram: None,
             psys: None,
+            iteration: iteration,
             timestamp,
         };
 
@@ -203,46 +216,15 @@ impl Counters {
     }
 }
 
-struct CsvWriter {
-    output_path: PathBuf,
-}
-
-impl CsvWriter {
-    fn new(output_path: PathBuf) -> Self {
-        Self { output_path }
-    }
-
-    fn write_measurement(
-        &self,
-        measurement: &Measurement,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let file_exists = self.output_path.exists();
-
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .append(true)
-            .open(&self.output_path)?;
-
-        let mut wtr = WriterBuilder::new()
-            .has_headers(!file_exists)
-            .from_writer(file);
-
-        wtr.serialize(measurement)?;
-        wtr.flush()?;
-
-        Ok(())
-    }
-}
-
 pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let mut rapl_counters = Counters::new(&args)?;
-    let csv_writer = CsvWriter::new(args.output_csv.clone());
+    let mut rapl = Counters::new(&args)?;
+    init_shared_state()?;
 
     for scenario_file in &args.scenarios {
         let scenario_path = scenario_file.as_path();
         let scenario = Scenario::try_from(scenario_path)?;
         let tests = Test::iterate_from_file(scenario_path)?;
+        let iterations: usize = args.iterations.into();
 
         for (index, test_result) in tests.enumerate() {
             let mut test = match test_result? {
@@ -261,61 +243,84 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                 Ok(ScenarioResult::Success { out, err }) => {
                     info!("{} Build success", context);
                     if !out.trim().is_empty() {
-                        info!("{} BUILD output:\n{}", context, out.trim());
+                        info!("{} Build output:\n{}", context, out.trim());
                     }
                     if !err.trim().is_empty() {
-                        warn!("{} BUILD stderr (warnings):\n{}", context, err.trim());
+                        warn!("{} Build stderr (warnings):\n{}", context, err.trim());
                     }
                 }
                 Ok(ScenarioResult::Failed { exit_code, err }) => {
-                    error!("{} BUILD failed with exit code {}", context, exit_code);
+                    error!("{} Build failed with exit code {}", context, exit_code);
                     if !err.trim().is_empty() {
-                        error!("{} BUILD stderr:\n{}", context, err.trim());
+                        error!("{} Build stderr:\n{}", context, err.trim());
                     }
                     continue;
                 }
                 Err(err) => {
-                    error!("{} BUILD error: {}", context, err);
+                    error!("{} Build error: {}", context, err);
                     continue;
                 }
             }
 
-            rapl_counters.reset()?;
-            rapl_counters.enable()?;
-            let exec_result = scenario.exec_test(&test);
-            rapl_counters.disable()?;
-
-            match exec_result {
-                Ok(ScenarioResult::Success { out, err }) => {
-                    info!("{} Exec success", context);
-                    if !out.trim().is_empty() {
-                        info!("{} Exec output:\n{}", context, out.trim());
-                    }
-                    if !err.trim().is_empty() {
-                        warn!("{} Exec stderr (warnings):\n{}", context, err.trim());
-                    }
-                }
-                Ok(ScenarioResult::Failed { exit_code, err }) => {
-                    error!("{} Exec failed with exit code {}", context, exit_code);
-                    if !err.trim().is_empty() {
-                        error!("{} Exec stderr:\n{}", context, err.trim());
-                    }
-                    continue;
-                }
+            set_iterations(iterations);
+            let child = match scenario.exec_test_async(&test) {
+                Ok(c) => c,
                 Err(err) => {
-                    error!("{} Exec error: {}", context, err);
+                    error!("{} Failed to spawn process: {}", context, err);
                     continue;
                 }
+            };
+            let mut measurements = Vec::new();
+
+            for i in 0..iterations {
+                wait_for_ready();
+                rapl.group.reset()?;
+                rapl.group.enable()?;
+                signal_proceed();
+                wait_for_measuring();
+                wait_for_complete();
+                rapl.group.disable()?;
+                let measurement =
+                    rapl.read_measurements(&scenario.name, &test.id.as_ref().unwrap(), i)?;
+                measurements.push(measurement);
             }
 
-            match scenario.verify_test(&test) {
+            let output = match child.wait_with_output() {
+                Ok(o) => o,
+                Err(err) => {
+                    error!("{} Failed to wait for process: {}", context, err);
+                    continue;
+                }
+            };
+
+            if output.status.success() {
+                info!("{} Exec success", context);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                if !stderr.trim().is_empty() {
+                    warn!("{} Exec stderr (warnings):\n{}", context, stderr.trim());
+                }
+            } else {
+                let exit_code = output.status.code().unwrap_or(-1);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                error!("{} Exec failed with exit code {}", context, exit_code);
+                if !stderr.trim().is_empty() {
+                    error!("{} Exec stderr:\n{}", context, stderr.trim());
+                }
+                continue;
+            }
+
+            match scenario.verify_test(&test, iterations) {
                 Ok(ScenarioResult::Success { out, err }) => {
                     info!("{} Test success", context);
                     if !out.trim().is_empty() {
-                        debug!("{} Test output:\n{}", context, out.trim());
+                        info!("{} Test output:\n{}", context, out.trim());
                     }
                     if !err.trim().is_empty() {
-                        debug!("{} Test stderr:\n{}", context, err.trim());
+                        info!("{} Test stderr:\n{}", context, err.trim());
+                    }
+
+                    for measurement in measurements {
+                        measurement.write_to_csv(&args.output_csv)?;
                     }
                 }
                 Ok(ScenarioResult::Failed { exit_code, err }) => {
@@ -330,11 +335,8 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                     continue;
                 }
             }
-
-            let measurement =
-                rapl_counters.read_measurements(&scenario.name, &test.id.as_ref().unwrap())?;
-            csv_writer.write_measurement(&measurement)?;
         }
+        cleanup_shared_memory();
     }
 
     info!("Measurements saved to: {}", args.output_csv.display());
