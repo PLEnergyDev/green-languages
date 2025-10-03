@@ -1,6 +1,6 @@
-use crate::scenario::result::ScenarioResult;
-use crate::scenario::test::Test;
-use crate::scenario::Scenario;
+use crate::core::Scenario;
+use crate::core::ScenarioResult;
+use crate::core::Test;
 use clap::Args;
 use csv::WriterBuilder;
 use iterations::share::cleanup_shared_memory;
@@ -38,7 +38,7 @@ pub struct MeasureArgs {
     #[arg(long)]
     rapl_all: bool,
     #[arg(long, default_value = "results.csv")]
-    output_csv: PathBuf,
+    output: PathBuf,
 }
 
 #[derive(Debug, Serialize)]
@@ -162,15 +162,15 @@ impl Counters {
     fn read_measurements(
         &mut self,
         scenario_name: &str,
-        test_id: &str,
+        test_name: &str,
         iteration: usize,
     ) -> Result<Measurement, Box<dyn std::error::Error>> {
         let counts = self.group.read()?;
-        let timestamp = chrono::Utc::now().timestamp();
+        let timestamp = chrono::Utc::now().timestamp_micros();
 
         let mut measurement = Measurement {
             scenario: scenario_name.to_string(),
-            test: test_id.to_string(),
+            test: test_name.to_string(),
             pkg: None,
             cores: None,
             gpu: None,
@@ -229,15 +229,16 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
         for (index, test_result) in tests.enumerate() {
             let mut test = match test_result? {
                 mut test => {
-                    if test.id.is_none() {
-                        test.id = Some(index.to_string());
+                    if test.name.is_none() {
+                        test.name = Some(index.to_string());
                     }
                     test
                 }
             };
 
-            let test_id = test.id.as_ref().unwrap();
-            let context = format!("[{}/{}]", scenario.name, test_id);
+            let mut measurements = Vec::new();
+            let test_name = test.name.as_ref().unwrap();
+            let context = format!("[{}/{}]", scenario.name, test_name);
 
             match scenario.build_test(&mut test) {
                 Ok(ScenarioResult::Success { out, err }) => {
@@ -249,10 +250,17 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                         warn!("{} Build stderr (warnings):\n{}", context, err.trim());
                     }
                 }
-                Ok(ScenarioResult::Failed { exit_code, err }) => {
+                Ok(ScenarioResult::Failed {
+                    exit_code,
+                    out,
+                    err,
+                }) => {
                     error!("{} Build failed with exit code {}", context, exit_code);
                     if !err.trim().is_empty() {
                         error!("{} Build stderr:\n{}", context, err.trim());
+                    }
+                    if !out.trim().is_empty() {
+                        error!("{} Build stdout:\n{}", context, out.trim());
                     }
                     continue;
                 }
@@ -262,26 +270,29 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            set_iterations(iterations);
             let child = match scenario.exec_test_async(&test) {
                 Ok(c) => c,
                 Err(err) => {
-                    error!("{} Failed to spawn process: {}", context, err);
+                    error!("{} {}", context, err);
                     continue;
                 }
             };
-            let mut measurements = Vec::new();
 
-            for i in 0..iterations {
+            set_iterations(iterations);
+
+            for i in 1..iterations + 1 {
                 wait_for_ready();
+
                 rapl.group.reset()?;
                 rapl.group.enable()?;
+
                 signal_proceed();
                 wait_for_measuring();
                 wait_for_complete();
+
                 rapl.group.disable()?;
                 let measurement =
-                    rapl.read_measurements(&scenario.name, &test.id.as_ref().unwrap(), i)?;
+                    rapl.read_measurements(&scenario.name, &test.name.as_ref().unwrap(), i)?;
                 measurements.push(measurement);
             }
 
@@ -320,13 +331,21 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     for measurement in measurements {
-                        measurement.write_to_csv(&args.output_csv)?;
+                        measurement.write_to_csv(&args.output)?;
                     }
+                    info!("Measurements saved: {}", args.output.display());
                 }
-                Ok(ScenarioResult::Failed { exit_code, err }) => {
+                Ok(ScenarioResult::Failed {
+                    exit_code,
+                    out,
+                    err,
+                }) => {
                     error!("{} Test failed with exit code {}", context, exit_code);
                     if !err.trim().is_empty() {
                         error!("{} Test failure details:\n{}", context, err.trim());
+                    }
+                    if !out.trim().is_empty() {
+                        error!("{} Test failure details:\n{}", context, out.trim());
                     }
                     continue;
                 }
@@ -339,6 +358,5 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
         cleanup_shared_memory();
     }
 
-    info!("Measurements saved to: {}", args.output_csv.display());
     Ok(())
 }

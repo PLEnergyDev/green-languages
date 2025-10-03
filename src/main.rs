@@ -21,7 +21,7 @@ fn configure_logger() -> Result<(), Box<dyn std::error::Error>> {
         .directory(results_dir)
         .basename("green-languages")
         .suppress_timestamp();
-    Logger::try_with_str("debug")?
+    Logger::try_with_str("info")?
         .log_to_file(file_spec)
         .write_mode(WriteMode::Direct)
         .format(custom_format)

@@ -1,5 +1,6 @@
+use super::Test;
 use base64::Engine;
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de, Deserialize, Deserializer, Serializer};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
@@ -32,28 +33,6 @@ where
         }
         None => serializer.serialize_none(),
     }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Test {
-    pub id: Option<String>,
-    pub compile_options: Option<Vec<String>>,
-    pub runtime_options: Option<Vec<String>>,
-    pub arguments: Option<Vec<String>>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "from_base64",
-        serialize_with = "to_base64"
-    )]
-    pub stdin: Option<Vec<u8>>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "from_base64",
-        serialize_with = "to_base64"
-    )]
-    pub expected_stdout: Option<Vec<u8>>,
 }
 
 impl Test {
