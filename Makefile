@@ -11,6 +11,10 @@ SIG_SO_DEBUG := $(SIG_DEBUG)/libiterations.so
 SIG_A_DEBUG := $(SIG_DEBUG)/libiterations.a
 SIG_HEADER := $(SIG_DIR)/iterations.h
 SIG_JNI := $(SIG_DIR)/Iterations.java
+BIN_NAME := green-languages
+BIN_ALIAS := gl
+BIN_DEBUG := target/debug/$(BIN_NAME)
+BIN_RELEASE := target/release/$(BIN_NAME)
 
 all: debug
 
@@ -28,6 +32,9 @@ debug: $(SIG_SO_DEBUG) $(SIG_A_DEBUG)
 	install -m 644 $(SIG_HEADER) $(SIG_LIB)
 	install -m 644 $(SIG_JNI) $(SIG_LIB)
 	cargo build
+	install -m 755 $(BIN_DEBUG) $(BIN_DIR)/$(BIN_NAME)
+	sudo setcap cap_sys_rawio,cap_perfmon=ep $(BIN_DIR)/$(BIN_NAME)
+	ln -sf $(BIN_NAME) $(BIN_DIR)/$(BIN_ALIAS)
 
 release: $(SIG_SO_RELEASE) $(SIG_A_RELEASE)
 	install -d -m 755 $(BIN_DIR)
@@ -37,8 +44,12 @@ release: $(SIG_SO_RELEASE) $(SIG_A_RELEASE)
 	install -m 644 $(SIG_HEADER) $(SIG_LIB)
 	install -m 644 $(SIG_JNI) $(SIG_LIB)
 	cargo build --release
+	install -m 755 $(BIN_RELEASE) $(BIN_DIR)/$(BIN_NAME)
+	sudo setcap cap_sys_rawio,cap_perfmon=ep $(BIN_DIR)/$(BIN_NAME)
+	ln -sf $(BIN_NAME) $(BIN_DIR)/$(BIN_ALIAS)
 
 uninstall:
+	rm -f $(BIN_DIR)/$(BIN_NAME)
 	rm -r $(SIG_LIB)
 	cargo clean --manifest-path $(SIG_DIR)/Cargo.toml
 	cargo clean

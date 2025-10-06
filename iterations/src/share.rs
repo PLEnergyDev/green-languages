@@ -6,7 +6,7 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use std::{mem, ptr};
 
-pub const SHM_NAME: &str = "/iter-signal-state";
+pub const SHM_NAME: &str = "/iterations-state";
 
 #[repr(C)]
 pub struct SharedState {

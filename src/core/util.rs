@@ -3,10 +3,6 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
-fn iterations_path() -> PathBuf {
-    Config::global().base_dir.join("iterations").join("lib")
-}
-
 pub trait CommandEnvExt {
     fn with_iterations_env(&mut self) -> &mut Self;
 }
@@ -23,4 +19,8 @@ impl CommandEnvExt for Command {
             .env("LD_LIBRARY_PATH", extend_path_var("LD_LIBRARY_PATH"))
             .env("CPATH", extend_path_var("CPATH"))
     }
+}
+
+pub fn iterations_path() -> PathBuf {
+    Config::global().base_dir.join("iterations").join("lib")
 }

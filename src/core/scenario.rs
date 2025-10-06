@@ -75,7 +75,7 @@ impl Scenario {
     pub fn exec_command(&self, test: &Test) -> Result<Vec<String>, ScenarioError> {
         let target = self.target_path(&test).to_string_lossy().to_string();
         match self.language {
-            Language::C => Ok(vec![target]),
+            Language::C | Language::Cpp => Ok(vec![target]),
             Language::Cs => {
                 let executable = self.test_dir(test).join("Program");
                 if !executable.exists() {
@@ -86,9 +86,24 @@ impl Scenario {
                 }
                 Ok(vec![executable.to_string_lossy().to_string()])
             }
-            Language::Cpp => Ok(vec![]),
             Language::Java => Ok(vec![]),
-            Language::Rust => Ok(vec![]),
+            Language::Rust => {
+                let test_dir = self.test_dir(test);
+                let release_path = test_dir.join("release").join("program");
+                let debug_path = test_dir.join("debug").join("program");
+                let executable = if release_path.exists() {
+                    release_path
+                } else if debug_path.exists() {
+                    debug_path
+                } else {
+                    return Err(ScenarioError::Io(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Rust executable not found",
+                    )));
+                };
+
+                Ok(vec![executable.to_string_lossy().to_string()])
+            }
             Language::Python => Ok(vec![]),
             Language::Ruby => Ok(vec![]),
         }
@@ -99,31 +114,47 @@ impl Scenario {
         let source = self.source_path().to_string_lossy().to_string();
         let target = self.target_path(&test).to_string_lossy().to_string();
         let test_dir = self.test_dir(&test).to_string_lossy().to_string();
+
         match self.language {
             Language::C => vec![
                 "gcc".to_string(),
                 source,
                 "-o".to_string(),
                 target,
-                "-w".to_string(),
                 "-literations".to_string(),
             ],
             Language::Cs => vec![
                 "dotnet".to_string(),
                 "build".to_string(),
                 scenario,
-                "--nologo".to_string(),
-                "-p:WarningLevel=0".to_string(),
-                "-p:UseSharedCompilation=false".to_string(),
                 "-p:OutputType=Exe".to_string(),
                 "--output".to_string(),
                 test_dir,
             ],
-            Language::Cpp => vec![],
+            Language::Cpp => vec![
+                "g++".to_string(),
+                source,
+                "-o".to_string(),
+                target,
+                "-literations".to_string(),
+            ],
             Language::Java => vec![],
-            Language::Rust => vec![],
-            Language::Python => vec![],
-            Language::Ruby => vec![],
+            Language::Rust => {
+                let toml_path = self
+                    .scenario_dir()
+                    .join("Cargo.toml")
+                    .to_string_lossy()
+                    .to_string();
+                vec![
+                    "cargo".to_string(),
+                    "build".to_string(),
+                    "--manifest-path".to_string(),
+                    toml_path,
+                    "--target-dir".to_string(),
+                    test_dir,
+                ]
+            },
+            Language::Python | Language::Ruby => vec![],
         }
     }
 
@@ -137,6 +168,8 @@ impl Scenario {
 
         match self.language {
             Language::Cs => self.prepare_cs_build()?,
+            Language::Java => self.prepare_java_build()?,
+            Language::Rust => self.prepare_rust_build()?,
             _ => (),
         }
 
@@ -310,6 +343,39 @@ impl Scenario {
         );
 
         fs::write(&csproj_path, csproj_content)?;
+
+        Ok(())
+    }
+
+    fn prepare_java_build(&self) -> Result<(), ScenarioError> {
+        Ok(())
+    }
+
+    fn prepare_rust_build(&self) -> Result<(), ScenarioError> {
+        let toml_path = self.scenario_dir().join("Cargo.toml");
+        let mut dependency_references = String::new();
+
+        for package in &self.packages {
+            let version = package.version.as_deref().unwrap_or("*");
+            dependency_references.push_str(&format!(r#"{} = "{}"\n"#, package.name, version));
+        }
+
+        let toml_content = format!(
+            r#"[package]
+            name = "program"
+            version = "0.1.0"
+            edition = "2024"
+
+            [[bin]]
+            name = "program"
+            path = "main.rs"
+
+            [dependencies]
+            {}"#,
+            dependency_references
+        );
+
+        fs::write(&toml_path, toml_content)?;
 
         Ok(())
     }

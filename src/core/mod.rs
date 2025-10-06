@@ -6,7 +6,6 @@ pub mod util;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString};
 use test::{from_base64, to_base64};
-
 use thiserror::Error;
 
 #[derive(Display, PartialEq, Eq, EnumString, EnumIter, Deserialize, Serialize)]
