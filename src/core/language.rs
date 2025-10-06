@@ -37,7 +37,7 @@ impl Language {
     pub fn is_compiled(&self) -> bool {
         match self {
             Language::C | Language::Cs | Language::Cpp | Language::Rust | Language::Java => true,
-            Language::Python | Language::Ruby => false,
+            _ => false,
         }
     }
 }

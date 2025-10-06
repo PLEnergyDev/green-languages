@@ -1,4 +1,4 @@
-use super::util::CommandEnvExt;
+use super::util::{iterations_dir_str, CommandEnvExt};
 use super::{Language, Scenario, ScenarioError, ScenarioResult, Test};
 use crate::config::Config;
 use serde::Deserialize;
@@ -74,6 +74,8 @@ impl Scenario {
 
     pub fn exec_command(&self, test: &Test) -> Result<Vec<String>, ScenarioError> {
         let target = self.target_path(&test).to_string_lossy().to_string();
+        let test_dir = self.test_dir(&test).to_string_lossy().to_string();
+
         match self.language {
             Language::C | Language::Cpp => Ok(vec![target]),
             Language::Cs => {
@@ -86,7 +88,16 @@ impl Scenario {
                 }
                 Ok(vec![executable.to_string_lossy().to_string()])
             }
-            Language::Java => Ok(vec![]),
+            Language::Java => {
+                let cp_flags = format!("{}:{}", iterations_dir_str(), test_dir);
+                Ok(vec![
+                    "java".to_string(),
+                    "--enable-native-access=ALL-UNNAMED".to_string(),
+                    "-cp".to_string(),
+                    cp_flags,
+                    self.language.target_file().to_string(),
+                ])
+            }
             Language::Rust => {
                 let test_dir = self.test_dir(test);
                 let release_path = test_dir.join("release").join("program");
@@ -138,7 +149,17 @@ impl Scenario {
                 target,
                 "-literations".to_string(),
             ],
-            Language::Java => vec![],
+            Language::Java => {
+                let cp_flags = format!("{}:{}", iterations_dir_str(), test_dir);
+                vec![
+                    "javac".to_string(),
+                    source,
+                    "-d".to_string(),
+                    test_dir,
+                    "-cp".to_string(),
+                    cp_flags,
+                ]
+            }
             Language::Rust => {
                 let toml_path = self
                     .scenario_dir()
@@ -153,7 +174,7 @@ impl Scenario {
                     "--target-dir".to_string(),
                     test_dir,
                 ]
-            },
+            }
             Language::Python | Language::Ruby => vec![],
         }
     }
@@ -168,7 +189,6 @@ impl Scenario {
 
         match self.language {
             Language::Cs => self.prepare_cs_build()?,
-            Language::Java => self.prepare_java_build()?,
             Language::Rust => self.prepare_rust_build()?,
             _ => (),
         }
@@ -205,16 +225,19 @@ impl Scenario {
     }
 
     pub fn exec_test_async(&self, test: &Test) -> Result<Child, ScenarioError> {
-        if self.language.is_compiled() {
-            if !self.runtime_options.is_empty() || !test.runtime_options.is_empty() {
-                return Err(ScenarioError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!(
-                        "Runtime options are not supported for compiled language '{}'",
-                        self.language
-                    ),
-                )));
+        match self.language {
+            Language::C | Language::Cpp | Language::Rust | Language::Cs => {
+                if !self.runtime_options.is_empty() || !test.runtime_options.is_empty() {
+                    return Err(ScenarioError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Runtime options are not supported for compiled language '{}'",
+                            self.language
+                        ),
+                    )));
+                }
             }
+            _ => {}
         }
 
         let mut command = self.exec_command(&test)?;
@@ -344,10 +367,6 @@ impl Scenario {
 
         fs::write(&csproj_path, csproj_content)?;
 
-        Ok(())
-    }
-
-    fn prepare_java_build(&self) -> Result<(), ScenarioError> {
         Ok(())
     }
 

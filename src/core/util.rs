@@ -9,10 +9,9 @@ pub trait CommandEnvExt {
 
 impl CommandEnvExt for Command {
     fn with_iterations_env(&mut self) -> &mut Self {
-        let iterations_path_str = iterations_path();
         let extend_path_var = |var_name: &str| {
             let current = env::var(var_name).unwrap_or_default();
-            format!("{}:{}", iterations_path_str.to_string_lossy(), current)
+            format!("{}:{}", iterations_dir_str(), current)
         };
 
         self.env("LIBRARY_PATH", extend_path_var("LIBRARY_PATH"))
@@ -21,6 +20,12 @@ impl CommandEnvExt for Command {
     }
 }
 
-pub fn iterations_path() -> PathBuf {
+
+pub fn iterations_dir() -> PathBuf {
     Config::global().base_dir.join("iterations").join("lib")
 }
+
+pub fn iterations_dir_str() -> String {
+    iterations_dir().to_string_lossy().to_string()
+}
+
