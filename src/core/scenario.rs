@@ -12,7 +12,14 @@ impl TryFrom<&Path> for Scenario {
     type Error = ScenarioError;
 
     fn try_from(path: &Path) -> Result<Self, Self::Error> {
-        let file = File::open(path)?;
+        let file = File::open(path).map_err(|e| {
+            if e.kind() == ErrorKind::NotFound {
+                ScenarioError::NotFound(path.to_path_buf())
+            } else {
+                ScenarioError::Io(e)
+            }
+        })?;
+
         let reader = BufReader::new(file);
         let mut deserializer = Deserializer::from_reader(reader);
         let first_doc = deserializer.next().ok_or_else(|| {
@@ -21,9 +28,8 @@ impl TryFrom<&Path> for Scenario {
                 "No scenario document found in file",
             ))
         })?;
-        let scenario: Scenario = serde_yml::Value::deserialize(first_doc)
-            .and_then(serde_yml::from_value)
-            .map_err(ScenarioError::Yaml)?;
+        let scenario: Scenario =
+            serde_yml::Value::deserialize(first_doc).and_then(serde_yml::from_value)?;
         Ok(scenario)
     }
 }

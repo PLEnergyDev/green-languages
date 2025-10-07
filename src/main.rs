@@ -19,7 +19,7 @@ fn configure_logger() -> Result<(), Box<dyn std::error::Error>> {
     let results_dir = Config::global().base_dir.join("results");
     let file_spec = FileSpec::default()
         .directory(results_dir)
-        .basename("green-languages")
+        .basename("gl")
         .suppress_timestamp();
     Logger::try_with_str("info")?
         .log_to_file(file_spec)
@@ -37,7 +37,6 @@ fn main() {
         eprintln!("Failed to configure logger: {}", err);
         std::process::exit(1);
     }
-
     let result = match cli.command {
         Commands::Measure(args) => run(args),
     };

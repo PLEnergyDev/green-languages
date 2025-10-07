@@ -1,58 +1,21 @@
+use super::{MeasureArgs, Measurement};
 use crate::core::Scenario;
 use crate::core::ScenarioResult;
 use crate::core::Test;
-use clap::Args;
 use csv::WriterBuilder;
 use iterations::share::cleanup_shared_memory;
 use iterations::signal::*;
 use log::{error, info, warn};
+use nix::sched::{sched_setaffinity, CpuSet};
+use nix::unistd::Pid;
 use perf_event::events::Rapl;
 use perf_event::{Builder, Counter, Group};
-use serde::Serialize;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-
-#[derive(Args)]
-pub struct MeasureArgs {
-    #[arg(short, long, default_value_t = 1)]
-    iterations: u8,
-    #[arg(short, long, default_value_t = 100)]
-    frequency: u16,
-    #[arg(short, long, default_value_t)]
-    sleep: u8,
-    #[arg(short, long, default_value_t = 100)]
-    timeout: u8,
-    #[arg(required = true, num_args = 1..)]
-    scenarios: Vec<PathBuf>,
-    #[arg(long)]
-    rapl_pkg: bool,
-    #[arg(long)]
-    rapl_cores: bool,
-    #[arg(long)]
-    rapl_gpu: bool,
-    #[arg(long)]
-    rapl_dram: bool,
-    #[arg(long)]
-    rapl_psys: bool,
-    #[arg(long)]
-    rapl_all: bool,
-    #[arg(long, default_value = "results.csv")]
-    output: PathBuf,
-}
-
-#[derive(Debug, Serialize)]
-struct Measurement {
-    scenario: String,
-    test: String,
-    pkg: Option<f64>,
-    cores: Option<f64>,
-    gpu: Option<f64>,
-    dram: Option<f64>,
-    psys: Option<f64>,
-    iteration: usize,
-    timestamp: i64,
-}
+use std::process::Child;
+use std::thread;
+use std::time::Duration;
 
 impl Measurement {
     fn write_to_csv(&self, output_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -122,7 +85,6 @@ impl Counters {
 
         let first_rapl_type = *rapl_types.values().next().unwrap();
         let mut group = Group::rapl(first_rapl_type)?;
-
         let mut counters = HashMap::new();
         for (name, &rapl_type) in &rapl_types {
             let counter = Builder::new()
@@ -161,16 +123,19 @@ impl Counters {
 
     fn read_measurements(
         &mut self,
+        language_name: &str,
         scenario_name: &str,
         test_name: &str,
         iteration: usize,
+        warmup: bool,
     ) -> Result<Measurement, Box<dyn std::error::Error>> {
         let counts = self.group.read()?;
         let timestamp = chrono::Utc::now().timestamp_micros();
-
         let mut measurement = Measurement {
+            language: language_name.to_string(),
             scenario: scenario_name.to_string(),
             test: test_name.to_string(),
+            warmup,
             pkg: None,
             cores: None,
             gpu: None,
@@ -216,9 +181,142 @@ impl Counters {
     }
 }
 
+fn configure_process(child: &Child, args: &MeasureArgs, context: &str) {
+    if let Some(cpu) = args.affinity {
+        let pid = Pid::from_raw(child.id() as i32);
+        let mut cpu_set = CpuSet::new();
+        if let Err(e) = cpu_set.set(cpu) {
+            warn!("{} Failed to configure CPU affinity: {}", context, e);
+        } else {
+            if let Err(e) = sched_setaffinity(pid, &cpu_set) {
+                warn!("{} Failed to set CPU affinity: {}", context, e);
+            }
+        }
+    }
+
+    if let Some(nice_value) = args.niceness {
+        unsafe {
+            if libc::setpriority(libc::PRIO_PROCESS, child.id(), nice_value) != 0 {
+                warn!("{} Failed to set process priority", context);
+            }
+        }
+    }
+}
+
+fn measure_with_warmup(
+    scenario: &Scenario,
+    test: &Test,
+    args: &MeasureArgs,
+    rapl: &mut Counters,
+    context: &str,
+    iterations: usize,
+) -> Result<Vec<Measurement>, Box<dyn std::error::Error>> {
+    let mut measurements = Vec::new();
+
+    let child = scenario.exec_test_async(test)?;
+    configure_process(&child, args, context);
+    set_iterations(iterations);
+
+    for i in 1..=iterations {
+        wait_for_ready();
+
+        rapl.group.reset()?;
+        rapl.group.enable()?;
+
+        signal_proceed();
+        wait_for_measuring();
+        wait_for_complete();
+
+        rapl.group.disable()?;
+        let measurement = rapl.read_measurements(
+            &scenario.language.to_string(),
+            &scenario.name,
+            test.name.as_ref().unwrap(),
+            i,
+            true,
+        )?;
+        measurements.push(measurement);
+    }
+
+    let output = child.wait_with_output()?;
+
+    if !output.status.success() {
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!("{} Exec failed with exit code {}", context, exit_code);
+        if !stderr.trim().is_empty() {
+            error!("{} Exec stderr:\n{}", context, stderr.trim());
+        }
+        return Err(format!("Process exited with code {}", exit_code).into());
+    }
+
+    info!("{} Exec success", context);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.trim().is_empty() {
+        warn!("{} Exec stderr (warnings):\n{}", context, stderr.trim());
+    }
+
+    Ok(measurements)
+}
+
+fn measure_without_warmup(
+    scenario: &Scenario,
+    test: &Test,
+    args: &MeasureArgs,
+    rapl: &mut Counters,
+    context: &str,
+    iterations: usize,
+) -> Result<Vec<Measurement>, Box<dyn std::error::Error>> {
+    let mut measurements = Vec::new();
+    set_iterations(1);
+
+    for i in 1..=iterations {
+        let child = scenario.exec_test_async(test)?;
+        configure_process(&child, args, context);
+
+        wait_for_ready();
+
+        rapl.group.reset()?;
+        rapl.group.enable()?;
+
+        signal_proceed();
+        wait_for_measuring();
+        wait_for_complete();
+
+        rapl.group.disable()?;
+        let measurement = rapl.read_measurements(
+            &scenario.language.to_string(),
+            &scenario.name,
+            test.name.as_ref().unwrap(),
+            i,
+            false,
+        )?;
+        measurements.push(measurement);
+
+        let output = child.wait_with_output()?;
+
+        if !output.status.success() {
+            let exit_code = output.status.code().unwrap_or(-1);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            error!(
+                "{} Exec failed with exit code {} on iteration {}",
+                context, exit_code, i
+            );
+            if !stderr.trim().is_empty() {
+                error!("{} Exec stderr:\n{}", context, stderr.trim());
+            }
+            return Err(
+                format!("Process exited with code {} on iteration {}", exit_code, i).into(),
+            );
+        }
+    }
+
+    info!("{} All iterations completed successfully", context);
+    Ok(measurements)
+}
+
 pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut rapl = Counters::new(&args)?;
-    init_shared_state()?;
 
     for scenario_file in &args.scenarios {
         let scenario_path = scenario_file.as_path();
@@ -226,17 +324,18 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
         let tests = Test::iterate_from_file(scenario_path)?;
         let iterations: usize = args.iterations.into();
 
+        init_shared_state()?;
+
         for (index, test_result) in tests.enumerate() {
             let mut test = match test_result? {
-                mut test => {
-                    if test.name.is_none() {
-                        test.name = Some(index.to_string());
+                mut t => {
+                    if t.name.is_none() {
+                        t.name = Some(index.to_string());
                     }
-                    test
+                    t
                 }
             };
 
-            let mut measurements = Vec::new();
             let test_name = test.name.as_ref().unwrap();
             let context = format!("[{}/{}]", scenario.name, test_name);
 
@@ -270,57 +369,29 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            let child = match scenario.exec_test_async(&test) {
-                Ok(c) => c,
-                Err(err) => {
-                    error!("{} {}", context, err);
-                    continue;
-                }
-            };
-
-            set_iterations(iterations);
-
-            for i in 1..iterations + 1 {
-                wait_for_ready();
-
-                rapl.group.reset()?;
-                rapl.group.enable()?;
-
-                signal_proceed();
-                wait_for_measuring();
-                wait_for_complete();
-
-                rapl.group.disable()?;
-                let measurement =
-                    rapl.read_measurements(&scenario.name, &test.name.as_ref().unwrap(), i)?;
-                measurements.push(measurement);
-            }
-
-            let output = match child.wait_with_output() {
-                Ok(o) => o,
-                Err(err) => {
-                    error!("{} Failed to wait for process: {}", context, err);
-                    continue;
-                }
-            };
-
-            if output.status.success() {
-                info!("{} Exec success", context);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                if !stderr.trim().is_empty() {
-                    warn!("{} Exec stderr (warnings):\n{}", context, stderr.trim());
+            let measurements = if args.warmup {
+                match measure_with_warmup(&scenario, &test, &args, &mut rapl, &context, iterations)
+                {
+                    Ok(m) => m,
+                    Err(err) => {
+                        error!("{} Measurement error: {}", context, err);
+                        continue;
+                    }
                 }
             } else {
-                let exit_code = output.status.code().unwrap_or(-1);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                error!("{} Exec failed with exit code {}", context, exit_code);
-                if !stderr.trim().is_empty() {
-                    error!("{} Exec stderr:\n{}", context, stderr.trim());
+                match measure_without_warmup(
+                    &scenario, &test, &args, &mut rapl, &context, iterations,
+                ) {
+                    Ok(m) => m,
+                    Err(err) => {
+                        error!("{} Measurement error: {}", context, err);
+                        continue;
+                    }
                 }
-                continue;
-            }
+            };
 
-            match scenario.verify_test(&test, iterations) {
+            let verify_iterations = if args.warmup { iterations } else { 1 };
+            match scenario.verify_test(&test, verify_iterations) {
                 Ok(ScenarioResult::Success { out, err }) => {
                     info!("{} Test success", context);
                     if !out.trim().is_empty() {
@@ -353,6 +424,11 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                     error!("{} Test error: {}", context, err);
                     continue;
                 }
+            }
+
+            if let Some(secs) = args.sleep {
+                info!("{} Sleeping for {} seconds", context, secs);
+                thread::sleep(Duration::from_secs(secs as u64));
             }
         }
         cleanup_shared_memory();

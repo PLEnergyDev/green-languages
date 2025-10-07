@@ -4,6 +4,7 @@ pub mod test;
 pub mod util;
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use strum::{Display, EnumIter, EnumString};
 use test::{from_base64, to_base64};
 use thiserror::Error;
@@ -46,7 +47,7 @@ pub struct Scenario {
     pub runtime_options: Vec<String>,
     pub framework: Option<String>,
     #[serde(default)]
-    pub dependencides: Vec<Dependency>,
+    pub dependencies: Vec<Dependency>,
     #[serde(default)]
     pub packages: Vec<Package>,
     #[serde(skip)]
@@ -57,11 +58,13 @@ pub struct Scenario {
 
 #[derive(Debug, Error)]
 pub enum ScenarioError {
-    #[error("IO Error: {0}")]
+    #[error("Scenario file not found: {0}")]
+    NotFound(PathBuf),
+    #[error("IO error reading scenario: {0}")]
     Io(#[from] std::io::Error),
-    #[error("YAML Parsing Error: {0}")]
+    #[error("YAML parsing error: {0}")]
     Yaml(#[from] serde_yml::Error),
-    #[error("Missing Code Error")]
+    #[error("Missing code in scenario")]
     MissingCode,
 }
 
