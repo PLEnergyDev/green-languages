@@ -3,6 +3,7 @@ use flexi_logger::{DeferredNow, FileSpec, Logger, Record, WriteMode};
 use green_languages::commands::cli::{Cli, Commands};
 use green_languages::commands::measure::run;
 use green_languages::config::Config;
+use green_languages::core::util::results_dir;
 use std::io::{Error, Write};
 
 fn custom_format(w: &mut dyn Write, now: &mut DeferredNow, record: &Record) -> Result<(), Error> {
@@ -16,9 +17,8 @@ fn custom_format(w: &mut dyn Write, now: &mut DeferredNow, record: &Record) -> R
 }
 
 fn configure_logger() -> Result<(), Box<dyn std::error::Error>> {
-    let results_dir = Config::global().base_dir.join("results");
     let file_spec = FileSpec::default()
-        .directory(results_dir)
+        .directory(results_dir())
         .basename("gl")
         .suppress_timestamp();
     Logger::try_with_str("info")?

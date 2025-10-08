@@ -10,10 +10,8 @@ use std::path::PathBuf;
 pub struct MeasureArgs {
     #[arg(short, long, default_value_t = 1)]
     iterations: u8,
-    #[arg(short, long, default_value_t = 100)]
-    frequency: u16,
-    #[arg(short, long)]
-    sleep: Option<u8>,
+    #[arg(short, long, default_value_t = 0)]
+    sleep: u8,
     #[arg(short, long, default_value_t = 100)]
     timeout: u8,
     #[arg(required = true, num_args = 1..)]
@@ -30,14 +28,16 @@ pub struct MeasureArgs {
     rapl_psys: bool,
     #[arg(long)]
     rapl_all: bool,
+    #[arg(long)]
+    hw_cycles: bool,
+    #[arg(long)]
+    hw_cache_misses: bool,
+    #[arg(long)]
+    hw_branch_misses: bool,
+    #[arg(long)]
+    hw_all: bool,
     #[arg(long, default_value = "results.csv")]
     output: PathBuf,
-    #[arg(long)]
-    affinity: Option<usize>,
-    #[arg(long)]
-    niceness: Option<i32>,
-    #[arg(long)]
-    warmup: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +51,9 @@ pub struct Measurement {
     gpu: Option<f64>,
     dram: Option<f64>,
     psys: Option<f64>,
+    cycles: Option<u64>,
+    cache_misses: Option<u64>,
+    branch_misses: Option<u64>,
     iteration: usize,
     timestamp: i64,
 }

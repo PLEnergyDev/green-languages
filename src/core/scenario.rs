@@ -1,6 +1,5 @@
-use super::util::{iterations_dir_str, CommandEnvExt};
+use super::util::{lib_dir_str, results_dir, CommandEnvExt};
 use super::{Language, Scenario, ScenarioError, ScenarioResult, Test};
-use crate::config::Config;
 use serde::Deserialize;
 use serde_yml::Deserializer;
 use std::fs::{self, File};
@@ -45,9 +44,7 @@ impl TryFrom<&str> for Scenario {
 impl Scenario {
     fn scenario_dir(&self) -> PathBuf {
         let origin = self.origin.as_deref().unwrap_or("default");
-        Config::global()
-            .base_dir
-            .join("results")
+        results_dir()
             .join(origin)
             .join(&self.language.to_string())
             .join(&self.name)
@@ -95,7 +92,7 @@ impl Scenario {
                 Ok(vec![executable.to_string_lossy().to_string()])
             }
             Language::Java => {
-                let cp_flags = format!("{}:{}", iterations_dir_str(), test_dir);
+                let cp_flags = format!("{}:{}", lib_dir_str(), test_dir);
                 Ok(vec![
                     "java".to_string(),
                     "--enable-native-access=ALL-UNNAMED".to_string(),
@@ -156,7 +153,7 @@ impl Scenario {
                 "-literations".to_string(),
             ],
             Language::Java => {
-                let cp_flags = format!("{}:{}", iterations_dir_str(), test_dir);
+                let cp_flags = format!("{}:{}", lib_dir_str(), test_dir);
                 vec![
                     "javac".to_string(),
                     source,

@@ -1,59 +1,70 @@
-PREFIX := $(HOME)
-BASE_DIR := .
-SIG_DIR := iterations
-SIG_RELEASE :=$(SIG_DIR)/target/release
-SIG_DEBUG :=$(SIG_DIR)/target/debug
-SIG_LIB :=$(SIG_DIR)/lib
-SIG_SO_RELEASE := $(SIG_RELEASE)/libiterations.so
-SIG_A_RELEASE := $(SIG_RELEASE)/libiterations.a
-SIG_SO_DEBUG := $(SIG_DEBUG)/libiterations.so
-SIG_A_DEBUG := $(SIG_DEBUG)/libiterations.a
-SIG_HEADER := $(SIG_DIR)/iterations.h
-SIG_JNI := $(SIG_DIR)/Iterations.java
-BIN_DIR := $(PREFIX)/.local/bin
-BIN_NAME := green-languages
-BIN_ALIAS := gl
-BIN_DEBUG := target/debug/$(BIN_NAME)
-BIN_RELEASE := target/release/$(BIN_NAME)
+IT_SO_RELEASE := iterations/target/release/libiterations.so
+IT_A_RELEASE := iterations/target/release/libiterations.a
+IT_SO_DEBUG := iterations/target/debug/libiterations.so
+IT_A_DEBUG := iterations/target/debug/libiterations.a
+IT_HEADER := iterations/iterations.h
+IT_JNI := iterations/Iterations.java
+GL_BIN_DIR := $(HOME)/.local/bin
+GL_LIB_DIR := $(HOME)/.local/lib/green-languages
+GL_BIN_NAME := green-languages
+GL_BIN_ALIAS := gl
+GL_BIN_DEBUG := target/debug/$(GL_BIN_NAME)
+GL_BIN_RELEASE := target/release/$(GL_BIN_NAME)
 
 all: debug
 
-$(SIG_SO_DEBUG) $(SIG_A_DEBUG):
-	cargo build --manifest-path $(SIG_DIR)/Cargo.toml
+$(IT_SO_DEBUG) $(IT_A_DEBUG):
+	cargo build --manifest-path iterations/Cargo.toml
 
-$(SIG_SO_RELEASE) $(SIG_A_RELEASE):
-	cargo build --release --manifest-path $(SIG_DIR)/Cargo.toml
+$(IT_SO_RELEASE) $(IT_A_RELEASE):
+	cargo build --release --manifest-path iterations/Cargo.toml
 
-debug: $(SIG_SO_DEBUG) $(SIG_A_DEBUG)
-	install -d -m 755 $(BIN_DIR)
-	install -d -m 755 $(SIG_LIB)
-	install -m 755 $(SIG_SO_DEBUG) $(SIG_LIB)
-	install -m 755 $(SIG_A_DEBUG) $(SIG_LIB)
-	install -m 644 $(SIG_HEADER) $(SIG_LIB)
-	install -m 644 $(SIG_JNI) $(SIG_LIB)
-	cargo build
-	install -m 755 $(BIN_DEBUG) $(BIN_DIR)/$(BIN_NAME)
-	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(BIN_DIR)/$(BIN_NAME)
-	ln -sf $(BIN_NAME) $(BIN_DIR)/$(BIN_ALIAS)
+debug: $(IT_SO_DEBUG) $(IT_A_DEBUG)
+	install -d -m 755 $(GL_BIN_DIR)
+	install -d -m 755 $(GL_LIB_DIR)
+	install -m 755 $(IT_SO_DEBUG) $(GL_LIB_DIR)
+	install -m 755 $(IT_A_DEBUG) $(GL_LIB_DIR)
+	install -m 644 $(IT_HEADER) $(GL_LIB_DIR)
+	install -m 644 $(IT_JNI) $(GL_LIB_DIR)
+	GL_LIB_DIR=$(GL_LIB_DIR) cargo build
+	install -m 755 $(GL_BIN_DEBUG) $(GL_BIN_DIR)/$(GL_BIN_NAME)
+	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(GL_BIN_DIR)/$(GL_BIN_NAME)
+	ln -sf $(GL_BIN_NAME) $(GL_BIN_DIR)/$(GL_BIN_ALIAS)
+	for script in script/*.py; do \
+		if [ "$$(basename $$script)" = "__main__.py" ]; then \
+			install -m 755 $$script $(GL_BIN_DIR)/gl-script; \
+		else \
+			install -m 644 $$script $(GL_LIB_DIR)/$$(basename $$script); \
+		fi \
+	done
 	sudo sysctl kernel.perf_event_paranoid=2
 
-release: $(SIG_SO_RELEASE) $(SIG_A_RELEASE)
-	install -d -m 755 $(BIN_DIR)
-	install -d -m 755 $(SIG_LIB)
-	install -m 755 $(SIG_SO_RELEASE) $(SIG_LIB)
-	install -m 755 $(SIG_A_RELEASE) $(SIG_LIB)
-	install -m 644 $(SIG_HEADER) $(SIG_LIB)
-	install -m 644 $(SIG_JNI) $(SIG_LIB)
-	cargo build --release
-	install -m 755 $(BIN_RELEASE) $(BIN_DIR)/$(BIN_NAME)
-	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(BIN_DIR)/$(BIN_NAME)
-	ln -sf $(BIN_NAME) $(BIN_DIR)/$(BIN_ALIAS)
+release: $(IT_SO_RELEASE) $(IT_A_RELEASE)
+	install -d -m 755 $(GL_BIN_DIR)
+	install -d -m 755 $(GL_LIB_DIR)
+	install -m 755 $(IT_SO_RELEASE) $(GL_LIB_DIR)
+	install -m 755 $(IT_A_RELEASE) $(GL_LIB_DIR)
+	install -m 644 $(IT_HEADER) $(GL_LIB_DIR)
+	install -m 644 $(IT_JNI) $(GL_LIB_DIR)
+	GL_LIB_DIR=$(GL_LIB_DIR) cargo build --release
+	install -m 755 $(GL_BIN_RELEASE) $(GL_BIN_DIR)/$(GL_BIN_NAME)
+	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(GL_BIN_DIR)/$(GL_BIN_NAME)
+	ln -sf $(GL_BIN_NAME) $(GL_BIN_DIR)/$(GL_BIN_ALIAS)
+	for script in script/*.py; do \
+		if [ "$$(basename $$script)" = "__main__.py" ]; then \
+			install -m 755 $$script $(GL_BIN_DIR)/gl-script; \
+		else \
+			install -m 644 $$script $(GL_LIB_DIR)/$$(basename $$script); \
+		fi \
+	done
 	sudo sysctl kernel.perf_event_paranoid=2
 
 uninstall:
-	rm -f $(BIN_DIR)/$(BIN_NAME)
-	rm -rf $(SIG_LIB)
-	cargo clean --manifest-path $(SIG_DIR)/Cargo.toml
+	rm -f $(GL_BIN_DIR)/$(GL_BIN_NAME)
+	rm -f $(GL_BIN_DIR)/$(GL_BIN_ALIAS)
+	rm -f $(GL_BIN_DIR)/gl-env
+	rm -rf $(GL_LIB_DIR)
+	cargo clean --manifest-path iterations/Cargo.toml
 	cargo clean
 
 .PHONY: all debug release uninstall

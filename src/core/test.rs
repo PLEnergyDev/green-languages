@@ -1,39 +1,8 @@
 use super::Test;
-use base64::Engine;
-use serde::{de, Deserialize, Deserializer, Serializer};
+use serde::Deserialize;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
-
-pub fn from_base64<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let opt = Option::<String>::deserialize(deserializer)?;
-    match opt {
-        Some(s) => {
-            let cleaned: String = s.chars().filter(|c| !c.is_ascii_whitespace()).collect();
-            base64::engine::general_purpose::STANDARD
-                .decode(cleaned.as_bytes())
-                .map(Some)
-                .map_err(|e| de::Error::custom(format!("invalid base64: {}", e)))
-        }
-        None => Ok(None),
-    }
-}
-
-pub fn to_base64<S>(value: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    match value {
-        Some(bytes) => {
-            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-            serializer.serialize_str(&encoded)
-        }
-        None => serializer.serialize_none(),
-    }
-}
 
 impl Test {
     pub fn iterate_from_file(

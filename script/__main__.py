@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 from dataclasses import dataclass
 from typing import Any
 import subprocess
@@ -5,6 +7,9 @@ import argparse
 import json
 import sys
 import os
+
+lib_dir = os.path.join(os.path.expanduser("~"), ".local", "lib", "green-languages")
+sys.path.insert(0, lib_dir)
 
 from util import *
 

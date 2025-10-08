@@ -1,18 +1,24 @@
-use std::env;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone)]
 pub struct Config {
-    pub base_dir: PathBuf,
+    pub lib_dir: PathBuf,
 }
 
 impl Config {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let base_dir = env::var("BASE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| env::current_dir().unwrap());
-        Ok(Config { base_dir })
+        let lib_dir = option_env!("GL_LIB_DIR").ok_or(
+            "GL_LIB_DIR was not set during compilation. Please reinstall the application.",
+        )?;
+
+        let lib_dir = PathBuf::from(lib_dir);
+
+        if !lib_dir.exists() {
+            return Err(format!("Library directory does not exist: {}", lib_dir.display()).into());
+        }
+
+        Ok(Config { lib_dir })
     }
 
     pub fn global() -> &'static Config {

@@ -6,8 +6,8 @@ pub mod util;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use strum::{Display, EnumIter, EnumString};
-use test::{from_base64, to_base64};
 use thiserror::Error;
+use util::{deserialize_args, from_base64, to_base64};
 
 #[derive(Display, PartialEq, Eq, EnumString, EnumIter, Deserialize, Serialize)]
 #[strum(serialize_all = "lowercase")]
@@ -50,6 +50,25 @@ pub struct Scenario {
     pub dependencies: Vec<Dependency>,
     #[serde(default)]
     pub packages: Vec<Package>,
+    pub affinity: Option<Vec<usize>>,
+    pub niceness: Option<i32>,
+    pub warmup: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_args")]
+    pub arguments: Vec<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "from_base64",
+        serialize_with = "to_base64"
+    )]
+    pub stdin: Option<Vec<u8>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "from_base64",
+        serialize_with = "to_base64"
+    )]
+    pub expected_stdout: Option<Vec<u8>>,
     #[serde(skip)]
     pub target: String,
     #[serde(skip)]
@@ -132,4 +151,7 @@ pub struct Test {
         serialize_with = "to_base64"
     )]
     pub expected_stdout: Option<Vec<u8>>,
+    pub affinity: Option<Vec<usize>>,
+    pub niceness: Option<i32>,
+    pub warmup: Option<bool>,
 }
