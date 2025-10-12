@@ -184,6 +184,10 @@ impl Scenario {
 
     pub fn build_test(&self, test: &mut Test) -> Result<ScenarioResult, ScenarioError> {
         let code = self.code.as_ref().ok_or(ScenarioError::MissingCode)?;
+        if code.trim().is_empty() {
+            return Err(ScenarioError::MissingCode);
+        }
+
         let source_path = self.source_path();
         let test_dir = self.test_dir(&test);
 
@@ -215,14 +219,16 @@ impl Scenario {
         let err = String::from_utf8_lossy(&output.stderr).to_string();
 
         if output.status.success() {
-            if let Some(ref stdin_data) = test.stdin.take() {
+            if let Some(stdin_data) = test.stdin.take() {
                 fs::write(self.stdin_path(&test), stdin_data)?;
             }
-            if let Some(ref expected_stdout_data) = test.expected_stdout.take() {
+            if let Some(expected_stdout_data) = test.expected_stdout.take() {
                 fs::write(self.expected_stdout_path(&test), expected_stdout_data)?;
             }
             Ok(ScenarioResult::success_with(out, err))
         } else {
+            test.stdin.take();
+            test.expected_stdout.take();
             Ok(ScenarioResult::failed_with(code, out, err))
         }
     }
@@ -256,8 +262,8 @@ impl Scenario {
 
         let stdout_path = self.stdout_path(&test);
         let output_file = File::create(&stdout_path)?;
-        let stdin_config = if test.stdin.is_some() {
-            let stdin_path = self.stdin_path(&test);
+        let stdin_path = self.stdin_path(&test);
+        let stdin_config = if stdin_path.exists() {
             let input_file = File::open(&stdin_path)?;
             Stdio::from(input_file)
         } else {
@@ -362,7 +368,9 @@ impl Scenario {
 
         let csproj_content = format!(
             r#"<Project Sdk="Microsoft.NET.Sdk">
-                   <PropertyGroup><TargetFramework>{}</TargetFramework></PropertyGroup>
+                   <PropertyGroup>
+                       <TargetFramework>{}</TargetFramework>
+                   </PropertyGroup>
                    <ItemGroup>{}</ItemGroup>
                </Project>"#,
             framework, package_references

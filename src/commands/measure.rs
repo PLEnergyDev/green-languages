@@ -354,7 +354,7 @@ fn configure_process(
     }
 }
 
-fn prepare_test(scenario: &Scenario, mut test: Test, index: usize) -> Test {
+fn prepare_test(scenario: &mut Scenario, mut test: Test, index: usize) -> Test {
     if test.name.is_none() {
         test.name = Some(index.to_string());
     }
@@ -363,10 +363,10 @@ fn prepare_test(scenario: &Scenario, mut test: Test, index: usize) -> Test {
         test.arguments = scenario.arguments.clone();
     }
     if test.stdin.is_none() && scenario.stdin.is_some() {
-        test.stdin = scenario.stdin.clone();
+        test.stdin = scenario.stdin.take();
     }
     if test.expected_stdout.is_none() && scenario.expected_stdout.is_some() {
-        test.expected_stdout = scenario.expected_stdout.clone();
+        test.expected_stdout = scenario.expected_stdout.take();
     }
 
     test
@@ -377,18 +377,16 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     for scenario_file in &args.scenarios {
         let scenario_path = scenario_file.as_path();
-        let scenario = Scenario::try_from(scenario_path)?;
+        let mut scenario = Scenario::try_from(scenario_path)?;
         let tests = Test::iterate_from_file(scenario_path)?;
         let iterations: usize = args.iterations.into();
 
         init_shared_state()?;
 
         for (index, test_result) in tests.enumerate() {
-            let mut test = prepare_test(&scenario, test_result?, index);
-
+            let mut test = prepare_test(&mut scenario, test_result?, index);
             let test_name = test.name.as_ref().unwrap();
             let context = format!("[{}/{}]", scenario.name, test_name);
-
             let affinity = test.affinity.clone().or(scenario.affinity.clone());
             let niceness = test.niceness.or(scenario.niceness);
             let warmup = test.warmup.or(scenario.warmup).unwrap_or(false);
@@ -463,6 +461,26 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
             let verify_iterations = if warmup { iterations } else { 1 };
             match scenario.verify_test(&test, verify_iterations) {
                 Ok(ScenarioResult::Success { out, err }) => {
+                    let output_path = if let Some(ref user_path) = args.output {
+                        if let Some(parent) = user_path.parent() {
+                            if !parent.exists() {
+                                error!(
+                                    "{} Output directory does not exist: {}",
+                                    context,
+                                    parent.display()
+                                );
+                                return Err(format!(
+                                    "Output directory does not exist: {}",
+                                    parent.display()
+                                )
+                                .into());
+                            }
+                        }
+                        user_path.clone()
+                    } else {
+                        results_dir().join("results.csv")
+                    };
+
                     info!("{} Test success", context);
                     if !out.trim().is_empty() {
                         info!("{} Test output:\n{}", context, out.trim());
@@ -470,12 +488,10 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                     if !err.trim().is_empty() {
                         info!("{} Test stderr:\n{}", context, err.trim());
                     }
-
                     for measurement in measurements {
-                        let output_path = results_dir().join(&args.output);
                         measurement.write_to_csv(&output_path)?;
                     }
-                    info!("Measurements saved: {}", args.output.display());
+                    info!("Measurements saved: {}", output_path.display());
                 }
                 Ok(ScenarioResult::Failed {
                     exit_code,
