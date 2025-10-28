@@ -16,7 +16,7 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::process::Child;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 impl Measurement {
     fn write_to_csv(&self, output_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
@@ -239,18 +239,26 @@ impl HardwareCounters {
 struct Counters {
     rapl: Option<RaplCounters>,
     hardware: Option<HardwareCounters>,
+    measure_time: bool,
+    start_time: Option<Instant>,
 }
 
 impl Counters {
     fn new(args: &MeasureArgs) -> Result<Self, Box<dyn std::error::Error>> {
         let rapl = RaplCounters::new(args)?;
         let hardware = HardwareCounters::new(args)?;
+        let measure_time = args.time;
 
-        if rapl.is_none() && hardware.is_none() {
-            return Err("No events specified. Use --rapl-* or --hw-* flags".into());
+        if rapl.is_none() && hardware.is_none() && !measure_time {
+            return Err("No events specified. Use --rapl-*, --hw-*, or --time flags".into());
         }
 
-        Ok(Self { rapl, hardware })
+        Ok(Self {
+            rapl,
+            hardware,
+            measure_time,
+            start_time: None,
+        })
     }
 
     fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -266,6 +274,9 @@ impl Counters {
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ref mut rapl) = self.rapl {
             rapl.group.enable()?;
+        }
+        if self.measure_time {
+            self.start_time = Some(Instant::now());
         }
         if let Some(ref mut hardware) = self.hardware {
             hardware.group.enable()?;
@@ -305,12 +316,17 @@ impl Counters {
             cycles: None,
             cache_misses: None,
             branch_misses: None,
+            time: None,
             iteration,
             timestamp,
         };
 
         if let Some(ref mut rapl) = self.rapl {
             rapl.read_into_measurement(&mut measurement)?;
+        }
+
+        if let Some(start) = self.start_time {
+            measurement.time = Some(start.elapsed().as_nanos() as u64);
         }
 
         if let Some(ref mut hardware) = self.hardware {

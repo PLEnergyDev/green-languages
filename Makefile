@@ -6,10 +6,9 @@ IT_HEADER := iterations/iterations.h
 IT_JNI := iterations/Iterations.java
 GL_BIN_DIR := $(HOME)/.local/bin
 GL_LIB_DIR := $(HOME)/.local/lib/green-languages
-GL_BIN_NAME := green-languages
 GL_BIN_ALIAS := gl
-GL_BIN_DEBUG := target/debug/$(GL_BIN_NAME)
-GL_BIN_RELEASE := target/release/$(GL_BIN_NAME)
+GL_BIN_DEBUG := target/debug/green-languages
+GL_BIN_RELEASE := target/release/green-languages
 
 all: debug
 
@@ -27,9 +26,9 @@ debug: $(IT_SO_DEBUG) $(IT_A_DEBUG)
 	install -m 644 $(IT_HEADER) $(GL_LIB_DIR)
 	install -m 644 $(IT_JNI) $(GL_LIB_DIR)
 	GL_LIB_DIR=$(GL_LIB_DIR) cargo build
-	install -m 755 $(GL_BIN_DEBUG) $(GL_BIN_DIR)/$(GL_BIN_NAME)
-	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(GL_BIN_DIR)/$(GL_BIN_NAME)
-	ln -sf $(GL_BIN_NAME) $(GL_BIN_DIR)/$(GL_BIN_ALIAS)
+	install -m 755 $(GL_BIN_DEBUG) $(GL_BIN_DIR)/green-languages
+	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(GL_BIN_DIR)/green-languages
+	ln -sf green-languages $(GL_BIN_DIR)/$(GL_BIN_ALIAS)
 	for script in script/*.py; do \
 		if [ "$$(basename $$script)" = "__main__.py" ]; then \
 			install -m 755 $$script $(GL_BIN_DIR)/gl-script; \
@@ -47,9 +46,9 @@ release: $(IT_SO_RELEASE) $(IT_A_RELEASE)
 	install -m 644 $(IT_HEADER) $(GL_LIB_DIR)
 	install -m 644 $(IT_JNI) $(GL_LIB_DIR)
 	GL_LIB_DIR=$(GL_LIB_DIR) cargo build --release
-	install -m 755 $(GL_BIN_RELEASE) $(GL_BIN_DIR)/$(GL_BIN_NAME)
-	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(GL_BIN_DIR)/$(GL_BIN_NAME)
-	ln -sf $(GL_BIN_NAME) $(GL_BIN_DIR)/$(GL_BIN_ALIAS)
+	install -m 755 $(GL_BIN_RELEASE) $(GL_BIN_DIR)/green-languages
+	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(GL_BIN_DIR)/green-languages
+	ln -sf green-languages $(GL_BIN_DIR)/$(GL_BIN_ALIAS)
 	for script in script/*.py; do \
 		if [ "$$(basename $$script)" = "__main__.py" ]; then \
 			install -m 755 $$script $(GL_BIN_DIR)/gl-script; \
@@ -60,7 +59,7 @@ release: $(IT_SO_RELEASE) $(IT_A_RELEASE)
 	sudo sysctl kernel.perf_event_paranoid=2
 
 uninstall:
-	rm -f $(GL_BIN_DIR)/$(GL_BIN_NAME)
+	rm -f $(GL_BIN_DIR)/green-languages
 	rm -f $(GL_BIN_DIR)/$(GL_BIN_ALIAS)
 	rm -f $(GL_BIN_DIR)/gl-env
 	rm -rf $(GL_LIB_DIR)
