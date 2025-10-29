@@ -1,9 +1,16 @@
-pub mod cli;
 pub mod measure;
 
-use clap::Args;
+use crate::core::MeasurementMode;
+use clap::{Args, Parser};
 use serde::Serialize;
 use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+pub struct Cli {
+    #[command(flatten)]
+    pub measure: MeasureArgs,
+}
 
 #[derive(Args)]
 pub struct MeasureArgs {
@@ -55,10 +62,14 @@ pub struct MeasureArgs {
 
 #[derive(Debug, Serialize)]
 pub struct Measurement {
-    pub language: String,
     pub scenario: String,
+    pub language: String,
     pub test: String,
-    pub warmup: bool,
+    pub mode: MeasurementMode,
+    /// Index of performed measurement
+    pub iteration: usize,
+    /// Elapsed time in nanoseconds
+    pub time: Option<u64>,
     pub pkg: Option<f64>,
     pub cores: Option<f64>,
     pub gpu: Option<f64>,
@@ -67,7 +78,5 @@ pub struct Measurement {
     pub cycles: Option<u64>,
     pub cache_misses: Option<u64>,
     pub branch_misses: Option<u64>,
-    pub time: Option<u64>,
-    pub iteration: usize,
-    pub timestamp: i64,
+    pub ended: i64,
 }

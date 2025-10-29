@@ -1,7 +1,7 @@
 use clap::Parser;
 use flexi_logger::{DeferredNow, FileSpec, Logger, Record, WriteMode};
-use green_languages::commands::cli::{Cli, Commands};
 use green_languages::commands::measure::run;
+use green_languages::commands::Cli;
 use green_languages::config::Config;
 use green_languages::core::util::results_dir;
 use std::io::{Error, Write};
@@ -37,9 +37,7 @@ fn main() {
         eprintln!("Failed to configure logger: {}", err);
         std::process::exit(1);
     }
-    let result = match cli.command {
-        Commands::Measure(args) => run(args),
-    };
+    let result = run(cli.measure);
     if let Err(err) = result {
         eprintln!("{}", err);
         std::process::exit(1);

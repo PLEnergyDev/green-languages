@@ -7,11 +7,11 @@ use std::path::PathBuf;
 use std::process::Command;
 
 pub trait CommandEnvExt {
-    fn with_iterations_env(&mut self) -> &mut Self;
+    fn with_measurements_env(&mut self) -> &mut Self;
 }
 
 impl CommandEnvExt for Command {
-    fn with_iterations_env(&mut self) -> &mut Self {
+    fn with_measurements_env(&mut self) -> &mut Self {
         let extend_path_var = |var_name: &str| {
             let current = env::var(var_name).unwrap_or_default();
             format!("{}:{}", lib_dir_str(), current)

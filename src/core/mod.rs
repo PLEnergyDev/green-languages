@@ -34,13 +34,20 @@ pub struct Dependency {
     pub version: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MeasurementMode {
+    Internal,
+    External,
+    Process,
+}
+
 #[derive(Deserialize, Serialize)]
 pub struct Scenario {
     pub name: String,
     pub language: Language,
     pub description: Option<String>,
     pub code: Option<String>,
-    pub origin: Option<String>,
     #[serde(default)]
     pub compile_options: Vec<String>,
     #[serde(default)]
@@ -52,7 +59,7 @@ pub struct Scenario {
     pub packages: Vec<Package>,
     pub affinity: Option<Vec<usize>>,
     pub niceness: Option<i32>,
-    pub warmup: Option<bool>,
+    pub measurement_mode: Option<MeasurementMode>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub arguments: Vec<String>,
     #[serde(
@@ -131,6 +138,7 @@ impl ScenarioResult {
 #[derive(Deserialize, Serialize)]
 pub struct Test {
     pub name: Option<String>,
+    pub measurement_mode: Option<MeasurementMode>,
     #[serde(default)]
     pub compile_options: Vec<String>,
     #[serde(default)]
@@ -153,5 +161,4 @@ pub struct Test {
     pub expected_stdout: Option<Vec<u8>>,
     pub affinity: Option<Vec<usize>>,
     pub niceness: Option<i32>,
-    pub warmup: Option<bool>,
 }

@@ -1,18 +1,16 @@
 use super::{MeasureArgs, Measurement};
 use crate::core::util::results_dir;
-use crate::core::Scenario;
-use crate::core::ScenarioResult;
-use crate::core::Test;
+use crate::core::{MeasurementMode, Scenario, ScenarioResult, Test};
 use csv::WriterBuilder;
-use iterations::share::cleanup_shared_memory;
-use iterations::signal::*;
 use log::{error, info, warn};
+use measurements::share::cleanup_shared_memory;
+use measurements::signal::*;
 use nix::sched::{sched_setaffinity, CpuSet};
 use nix::unistd::Pid;
 use perf_event::events::{Hardware, Rapl};
 use perf_event::{Builder, Counter, Group};
 use std::collections::HashMap;
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 use std::process::Child;
 use std::thread;
@@ -272,24 +270,24 @@ impl Counters {
     }
 
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(ref mut rapl) = self.rapl {
-            rapl.group.enable()?;
-        }
         if self.measure_time {
             self.start_time = Some(Instant::now());
         }
         if let Some(ref mut hardware) = self.hardware {
             hardware.group.enable()?;
         }
+        if let Some(ref mut rapl) = self.rapl {
+            rapl.group.enable()?;
+        }
         Ok(())
     }
 
     fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(ref mut hardware) = self.hardware {
-            hardware.group.disable()?;
-        }
         if let Some(ref mut rapl) = self.rapl {
             rapl.group.disable()?;
+        }
+        if let Some(ref mut hardware) = self.hardware {
+            hardware.group.disable()?;
         }
         Ok(())
     }
@@ -300,14 +298,16 @@ impl Counters {
         scenario_name: &str,
         test_name: &str,
         iteration: usize,
-        warmup: bool,
+        mode: MeasurementMode,
     ) -> Result<Measurement, Box<dyn std::error::Error>> {
-        let timestamp = chrono::Utc::now().timestamp_micros();
+        let ended = chrono::Utc::now().timestamp_micros();
         let mut measurement = Measurement {
             language: language_name.to_string(),
             scenario: scenario_name.to_string(),
             test: test_name.to_string(),
-            warmup,
+            mode,
+            iteration,
+            time: None,
             pkg: None,
             cores: None,
             gpu: None,
@@ -316,23 +316,18 @@ impl Counters {
             cycles: None,
             cache_misses: None,
             branch_misses: None,
-            time: None,
-            iteration,
-            timestamp,
+            ended,
         };
 
         if let Some(ref mut rapl) = self.rapl {
             rapl.read_into_measurement(&mut measurement)?;
         }
-
         if let Some(start) = self.start_time {
             measurement.time = Some(start.elapsed().as_nanos() as u64);
         }
-
         if let Some(ref mut hardware) = self.hardware {
             hardware.read_into_measurement(&mut measurement)?;
         }
-
         Ok(measurement)
     }
 }
@@ -347,15 +342,11 @@ fn configure_process(
         let pid = Pid::from_raw(child.id() as i32);
         let mut cpu_set = CpuSet::new();
 
-        for &cpu in cpus {
-            if let Err(e) = cpu_set.set(cpu) {
-                warn!(
-                    "{} Failed to add CPU {} to affinity set: {}",
-                    context, cpu, e
-                );
+        for &c in cpus {
+            if let Err(e) = cpu_set.set(c) {
+                warn!("{} Failed to add CPU {} to affinity set: {}", context, c, e);
             }
         }
-
         if let Err(e) = sched_setaffinity(pid, &cpu_set) {
             warn!("{} Failed to set CPU affinity: {}", context, e);
         }
@@ -369,25 +360,6 @@ fn configure_process(
         }
     }
 }
-
-fn prepare_test(scenario: &mut Scenario, mut test: Test, index: usize) -> Test {
-    if test.name.is_none() {
-        test.name = Some(index.to_string());
-    }
-
-    if test.arguments.is_empty() && !scenario.arguments.is_empty() {
-        test.arguments = scenario.arguments.clone();
-    }
-    if test.stdin.is_none() && scenario.stdin.is_some() {
-        test.stdin = scenario.stdin.take();
-    }
-    if test.expected_stdout.is_none() && scenario.expected_stdout.is_some() {
-        test.expected_stdout = scenario.expected_stdout.take();
-    }
-
-    test
-}
-
 pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut counters = Counters::new(&args)?;
 
@@ -397,18 +369,34 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
         let tests = Test::iterate_from_file(scenario_path)?;
         let iterations: usize = args.iterations.into();
 
+        let scenario_dir = scenario.scenario_dir();
+        if scenario_dir.exists() {
+            fs::remove_dir_all(&scenario_dir)?;
+        }
+
         init_shared_state()?;
 
         for (index, test_result) in tests.enumerate() {
-            let mut test = prepare_test(&mut scenario, test_result?, index);
+            let mut test = test_result?;
+
+            if test.name.is_none() {
+                test.name = Some(index.to_string());
+            }
+            if test.arguments.is_empty() && !scenario.arguments.is_empty() {
+                test.arguments = scenario.arguments.clone();
+            }
+
             let test_name = test.name.as_ref().unwrap();
             let context = format!("[{}/{}]", scenario.name, test_name);
             let affinity = test.affinity.clone().or(scenario.affinity.clone());
             let niceness = test.niceness.or(scenario.niceness);
-            let warmup = test.warmup.or(scenario.warmup).unwrap_or(false);
+            let measurement_mode = test
+                .measurement_mode
+                .or(scenario.measurement_mode)
+                .unwrap_or(MeasurementMode::Process);
 
             info!("{} Build started", context);
-            match scenario.build_test(&mut test) {
+            match scenario.build_test(&mut test, index) {
                 Ok(ScenarioResult::Success { out, err }) => {
                     info!("{} Build success", context);
                     if !out.trim().is_empty() {
@@ -439,8 +427,8 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             info!("{} Measurement start", context);
-            let measurements = if warmup {
-                match measure_with_warmup(
+            let measurements = match measurement_mode {
+                MeasurementMode::Internal => match measure_internal(
                     &scenario,
                     &test,
                     &mut counters,
@@ -454,9 +442,8 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                         error!("{} Measurement error: {}", context, err);
                         continue;
                     }
-                }
-            } else {
-                match measure_without_warmup(
+                },
+                MeasurementMode::External => match measure_external(
                     &scenario,
                     &test,
                     &mut counters,
@@ -470,64 +457,90 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
                         error!("{} Measurement error: {}", context, err);
                         continue;
                     }
-                }
+                },
+                MeasurementMode::Process => match measure_process(
+                    &scenario,
+                    &test,
+                    &mut counters,
+                    &context,
+                    iterations,
+                    &affinity,
+                    niceness,
+                ) {
+                    Ok(m) => m,
+                    Err(err) => {
+                        error!("{} Measurement error: {}", context, err);
+                        continue;
+                    }
+                },
             };
 
-            info!("{} Test started", context);
-            let verify_iterations = if warmup { iterations } else { 1 };
-            match scenario.verify_test(&test, verify_iterations) {
-                Ok(ScenarioResult::Success { out, err }) => {
-                    let output_path = if let Some(ref user_path) = args.output {
-                        if let Some(parent) = user_path.parent() {
-                            if !parent.exists() {
-                                error!(
-                                    "{} Output directory does not exist: {}",
-                                    context,
-                                    parent.display()
-                                );
-                                return Err(format!(
-                                    "Output directory does not exist: {}",
-                                    parent.display()
-                                )
-                                .into());
-                            }
-                        }
-                        user_path.clone()
-                    } else {
-                        results_dir().join("results.csv")
-                    };
+            let test_expected_stdout_path = scenario.test_expected_stdout_path(&test);
+            let scenario_expected_stdout_path = scenario.scenario_expected_stdout_path();
+            let should_verify =
+                test_expected_stdout_path.exists() || scenario_expected_stdout_path.exists();
 
-                    info!("{} Test success", context);
-                    if !out.trim().is_empty() {
-                        info!("{} Test output:\n{}", context, out.trim());
+            if should_verify {
+                info!("{} Test started", context);
+                let verify_iterations = match measurement_mode {
+                    MeasurementMode::Internal => iterations,
+                    _ => 1,
+                };
+                match scenario.verify_test(&test, verify_iterations) {
+                    Ok(ScenarioResult::Success { out, err }) => {
+                        info!("{} Test success", context);
+                        if !out.trim().is_empty() {
+                            info!("{} Test output:\n{}", context, out.trim());
+                        }
+                        if !err.trim().is_empty() {
+                            info!("{} Test stderr:\n{}", context, err.trim());
+                        }
                     }
-                    if !err.trim().is_empty() {
-                        info!("{} Test stderr:\n{}", context, err.trim());
+                    Ok(ScenarioResult::Failed {
+                        exit_code,
+                        out,
+                        err,
+                    }) => {
+                        error!("{} Test failed with exit code {}", context, exit_code);
+                        if !err.trim().is_empty() {
+                            error!("{} Test failure details:\n{}", context, err.trim());
+                        }
+                        if !out.trim().is_empty() {
+                            error!("{} Test failure details:\n{}", context, out.trim());
+                        }
+                        continue;
                     }
-                    for measurement in measurements {
-                        measurement.write_to_csv(&output_path)?;
+                    Err(err) => {
+                        error!("{} Test error: {}", context, err);
+                        continue;
                     }
-                    info!("Measurements saved: {}", output_path.display());
-                }
-                Ok(ScenarioResult::Failed {
-                    exit_code,
-                    out,
-                    err,
-                }) => {
-                    error!("{} Test failed with exit code {}", context, exit_code);
-                    if !err.trim().is_empty() {
-                        error!("{} Test failure details:\n{}", context, err.trim());
-                    }
-                    if !out.trim().is_empty() {
-                        error!("{} Test failure details:\n{}", context, out.trim());
-                    }
-                    continue;
-                }
-                Err(err) => {
-                    error!("{} Test error: {}", context, err);
-                    continue;
                 }
             }
+
+            let output_path = if let Some(ref user_path) = args.output {
+                if let Some(parent) = user_path.parent() {
+                    if !parent.exists() {
+                        error!(
+                            "{} Output directory does not exist: {}",
+                            context,
+                            parent.display()
+                        );
+                        return Err(format!(
+                            "Output directory does not exist: {}",
+                            parent.display()
+                        )
+                        .into());
+                    }
+                }
+                user_path.clone()
+            } else {
+                results_dir().join("results.csv")
+            };
+
+            for measurement in measurements {
+                measurement.write_to_csv(&output_path)?;
+            }
+            info!("Measurements saved: {}", output_path.display());
 
             if args.sleep > 0 {
                 info!("{} Sleeping for {} seconds", context, args.sleep);
@@ -540,7 +553,7 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn measure_with_warmup(
+fn measure_internal(
     scenario: &Scenario,
     test: &Test,
     counters: &mut Counters,
@@ -552,17 +565,16 @@ fn measure_with_warmup(
     let mut measurements = Vec::new();
     set_iterations(iterations);
 
-    let child = scenario.exec_test_async(test)?;
+    let child = scenario.exec_test_async(test, MeasurementMode::Internal)?;
     configure_process(&child, affinity, niceness, context);
 
-    for i in 1..=iterations {
+    for iteration in 1..=iterations {
         wait_for_ready();
 
         counters.reset()?;
         counters.enable()?;
 
         signal_proceed();
-        wait_for_measuring();
         wait_for_complete();
 
         counters.disable()?;
@@ -571,8 +583,8 @@ fn measure_with_warmup(
             &scenario.language.to_string(),
             &scenario.name,
             test.name.as_ref().unwrap(),
-            i,
-            true,
+            iteration,
+            MeasurementMode::Internal,
         )?;
         measurements.push(measurement);
     }
@@ -598,7 +610,7 @@ fn measure_with_warmup(
     Ok(measurements)
 }
 
-fn measure_without_warmup(
+fn measure_external(
     scenario: &Scenario,
     test: &Test,
     counters: &mut Counters,
@@ -609,10 +621,10 @@ fn measure_without_warmup(
 ) -> Result<Vec<Measurement>, Box<dyn std::error::Error>> {
     let mut measurements = Vec::new();
 
-    for i in 1..=iterations {
+    for iteration in 1..=iterations {
         set_iterations(1);
 
-        let child = scenario.exec_test_async(test)?;
+        let child = scenario.exec_test_async(test, MeasurementMode::External)?;
         configure_process(&child, affinity, niceness, context);
 
         wait_for_ready();
@@ -621,7 +633,6 @@ fn measure_without_warmup(
         counters.enable()?;
 
         signal_proceed();
-        wait_for_measuring();
         wait_for_complete();
 
         counters.disable()?;
@@ -630,29 +641,79 @@ fn measure_without_warmup(
             &scenario.language.to_string(),
             &scenario.name,
             test.name.as_ref().unwrap(),
-            i,
-            false,
+            iteration,
+            MeasurementMode::External,
         )?;
-        measurements.push(measurement);
 
         let output = child.wait_with_output()?;
-
-        if !output.status.success() {
-            let exit_code = output.status.code().unwrap_or(-1);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            error!(
-                "{} Exec failed with exit code {} on iteration {}",
-                context, exit_code, i
-            );
-            if !stderr.trim().is_empty() {
-                error!("{} Exec stderr:\n{}", context, stderr.trim());
-            }
-            return Err(
-                format!("Process exited with code {} on iteration {}", exit_code, i).into(),
-            );
-        }
+        finalize_measurement(output, context, iteration, measurement, &mut measurements)?;
     }
 
     info!("{} All iterations completed successfully", context);
     Ok(measurements)
+}
+
+fn measure_process(
+    scenario: &Scenario,
+    test: &Test,
+    counters: &mut Counters,
+    context: &str,
+    iterations: usize,
+    affinity: &Option<Vec<usize>>,
+    niceness: Option<i32>,
+) -> Result<Vec<Measurement>, Box<dyn std::error::Error>> {
+    let mut measurements = Vec::new();
+
+    for iteration in 1..=iterations {
+        let child = scenario.exec_test_async(test, MeasurementMode::Process)?;
+        configure_process(&child, affinity, niceness, context);
+
+        counters.reset()?;
+        counters.enable()?;
+
+        let output = child.wait_with_output()?;
+
+        counters.disable()?;
+
+        let measurement = counters.read_measurements(
+            &scenario.language.to_string(),
+            &scenario.name,
+            test.name.as_ref().unwrap(),
+            iteration,
+            MeasurementMode::Process,
+        )?;
+
+        finalize_measurement(output, context, iteration, measurement, &mut measurements)?;
+    }
+
+    info!("{} All iterations completed successfully", context);
+    Ok(measurements)
+}
+
+fn finalize_measurement(
+    output: std::process::Output,
+    context: &str,
+    iteration: usize,
+    measurement: Measurement,
+    measurements: &mut Vec<Measurement>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !output.status.success() {
+        let exit_code = output.status.code().unwrap_or(-1);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!(
+            "{} Exec failed with exit code {} on iteration {}",
+            context, exit_code, iteration
+        );
+        if !stderr.trim().is_empty() {
+            error!("{} Exec stderr:\n{}", context, stderr.trim());
+        }
+        return Err(format!(
+            "Process exited with code {} on iteration {}",
+            exit_code, iteration
+        )
+        .into());
+    }
+
+    measurements.push(measurement);
+    Ok(())
 }

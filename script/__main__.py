@@ -221,7 +221,7 @@ def set_swaps(enable: bool, devices: list[str] | None = None) -> None:
         raise ProgramError(f"failed while setting swap - {ex}")
 
 
-BACKUP_FILE = ".env_backup.json"
+BACKUP_FILE = ".gle.json"
 
 
 @dataclass

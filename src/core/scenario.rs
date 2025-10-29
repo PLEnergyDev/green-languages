@@ -1,5 +1,5 @@
 use super::util::{lib_dir_str, results_dir, CommandEnvExt};
-use super::{Language, Scenario, ScenarioError, ScenarioResult, Test};
+use super::{Language, MeasurementMode, Scenario, ScenarioError, ScenarioResult, Test};
 use serde::Deserialize;
 use serde_yml::Deserializer;
 use std::fs::{self, File};
@@ -42,10 +42,9 @@ impl TryFrom<&str> for Scenario {
 }
 
 impl Scenario {
-    fn scenario_dir(&self) -> PathBuf {
-        let origin = self.origin.as_deref().unwrap_or("default");
+    pub fn scenario_dir(&self) -> PathBuf {
         results_dir()
-            .join(origin)
+            .join("build")
             .join(&self.language.to_string())
             .join(&self.name)
     }
@@ -63,16 +62,24 @@ impl Scenario {
         self.scenario_dir().join(&self.language.source_file())
     }
 
-    fn stdin_path(&self, test: &Test) -> PathBuf {
-        self.test_dir(test).join("stdin.txt")
-    }
-
     fn stdout_path(&self, test: &Test) -> PathBuf {
         self.test_dir(test).join("stdout.txt")
     }
 
-    fn expected_stdout_path(&self, test: &Test) -> PathBuf {
+    pub fn test_expected_stdout_path(&self, test: &Test) -> PathBuf {
         self.test_dir(test).join("expected_stdout.txt")
+    }
+
+    pub fn scenario_expected_stdout_path(&self) -> PathBuf {
+        self.scenario_dir().join("expected_stdout.txt")
+    }
+
+    fn test_stdin_path(&self, test: &Test) -> PathBuf {
+        self.test_dir(test).join("stdin.txt")
+    }
+
+    fn scenario_stdin_path(&self) -> PathBuf {
+        self.scenario_dir().join("stdin.txt")
     }
 
     pub fn exec_command(&self, test: &Test) -> Result<Vec<String>, ScenarioError> {
@@ -135,7 +142,7 @@ impl Scenario {
                 source,
                 "-o".to_string(),
                 target,
-                "-literations".to_string(),
+                "-lmeasurements".to_string(),
             ],
             Language::Cs => vec![
                 "dotnet".to_string(),
@@ -150,7 +157,7 @@ impl Scenario {
                 source,
                 "-o".to_string(),
                 target,
-                "-literations".to_string(),
+                "-lmeasurements".to_string(),
             ],
             Language::Java => {
                 let cp_flags = format!("{}:{}", lib_dir_str(), test_dir);
@@ -182,7 +189,11 @@ impl Scenario {
         }
     }
 
-    pub fn build_test(&self, test: &mut Test) -> Result<ScenarioResult, ScenarioError> {
+    pub fn build_test(
+        &mut self,
+        test: &mut Test,
+        index: usize,
+    ) -> Result<ScenarioResult, ScenarioError> {
         let code = self.code.as_ref().ok_or(ScenarioError::MissingCode)?;
         if code.trim().is_empty() {
             return Err(ScenarioError::MissingCode);
@@ -193,6 +204,19 @@ impl Scenario {
 
         fs::create_dir_all(&test_dir)?;
         fs::write(&source_path, code)?;
+
+        if test.name.is_none() {
+            test.name = Some(index.to_string());
+        }
+        if test.arguments.is_empty() && !self.arguments.is_empty() {
+            test.arguments = self.arguments.clone();
+        }
+        if let Some(stdin_data) = self.stdin.take() {
+            fs::write(self.scenario_stdin_path(), stdin_data)?;
+        }
+        if let Some(expected_stdout_data) = self.expected_stdout.take() {
+            fs::write(self.scenario_expected_stdout_path(), expected_stdout_data)?;
+        }
 
         match self.language {
             Language::Cs => self.prepare_cs_build()?,
@@ -210,7 +234,7 @@ impl Scenario {
 
         let output = Command::new(&command[0])
             .args(&command[1..])
-            .with_iterations_env()
+            .with_measurements_env()
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()?;
@@ -220,10 +244,10 @@ impl Scenario {
 
         if output.status.success() {
             if let Some(stdin_data) = test.stdin.take() {
-                fs::write(self.stdin_path(&test), stdin_data)?;
+                fs::write(self.test_stdin_path(&test), stdin_data)?;
             }
             if let Some(expected_stdout_data) = test.expected_stdout.take() {
-                fs::write(self.expected_stdout_path(&test), expected_stdout_data)?;
+                fs::write(self.test_expected_stdout_path(&test), expected_stdout_data)?;
             }
             Ok(ScenarioResult::success_with(out, err))
         } else {
@@ -233,7 +257,11 @@ impl Scenario {
         }
     }
 
-    pub fn exec_test_async(&self, test: &Test) -> Result<Child, ScenarioError> {
+    pub fn exec_test_async(
+        &self,
+        test: &Test,
+        mode: MeasurementMode,
+    ) -> Result<Child, ScenarioError> {
         match self.language {
             Language::C | Language::Cpp | Language::Rust | Language::Cs => {
                 if !self.runtime_options.is_empty() || !test.runtime_options.is_empty() {
@@ -262,37 +290,31 @@ impl Scenario {
 
         let stdout_path = self.stdout_path(&test);
         let output_file = File::create(&stdout_path)?;
-        let stdin_path = self.stdin_path(&test);
-        let stdin_config = if stdin_path.exists() {
-            let input_file = File::open(&stdin_path)?;
+        let test_stdin_path = self.test_stdin_path(&test);
+        let scenario_stdin_path = self.scenario_stdin_path();
+        let stdin_config = if test_stdin_path.exists() {
+            let input_file = File::open(&test_stdin_path)?;
+            Stdio::from(input_file)
+        } else if scenario_stdin_path.exists() {
+            let input_file = File::open(&scenario_stdin_path)?;
             Stdio::from(input_file)
         } else {
             Stdio::null()
         };
 
-        let child = Command::new(&command[0])
-            .args(&command[1..])
-            .with_iterations_env()
+        let mut cmd = Command::new(&command[0]);
+        cmd.args(&command[1..])
             .stdout(Stdio::from(output_file))
             .stderr(Stdio::piped())
-            .stdin(stdin_config)
-            .spawn()?;
+            .stdin(stdin_config);
+
+        if matches!(mode, MeasurementMode::Internal | MeasurementMode::External) {
+            cmd.with_measurements_env();
+        }
+
+        let child = cmd.spawn()?;
 
         Ok(child)
-    }
-
-    pub fn exec_test(&self, test: &Test) -> Result<ScenarioResult, ScenarioError> {
-        let child = self.exec_test_async(test)?;
-        let output = child.wait_with_output()?;
-        let code = output.status.code().unwrap_or_default();
-        let out = String::from_utf8_lossy(&output.stdout).to_string();
-        let err = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if output.status.success() {
-            Ok(ScenarioResult::success())
-        } else {
-            Ok(ScenarioResult::failed_with(code, out, err))
-        }
     }
 
     pub fn verify_test(
@@ -300,10 +322,16 @@ impl Scenario {
         test: &Test,
         iterations: usize,
     ) -> Result<ScenarioResult, ScenarioError> {
-        let expected_stdout_path = self.expected_stdout_path(test);
-        if !expected_stdout_path.exists() {
+        let test_expected_stdout_path = self.test_expected_stdout_path(test);
+        let scenario_expected_stdout_path = self.scenario_expected_stdout_path();
+
+        let expected_stdout_path = if test_expected_stdout_path.exists() {
+            test_expected_stdout_path
+        } else if scenario_expected_stdout_path.exists() {
+            scenario_expected_stdout_path
+        } else {
             return Ok(ScenarioResult::success());
-        }
+        };
 
         let stdout_path = self.stdout_path(test);
         let expected = std::fs::read(&expected_stdout_path)?;
