@@ -31,20 +31,21 @@ pub fn results_dir() -> PathBuf {
     PathBuf::from(".").join("results")
 }
 
-pub fn deserialize_args<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+pub fn deserialize_args<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let values: Vec<Value> = Vec::deserialize(deserializer)?;
-    Ok(values
-        .into_iter()
-        .map(|v| match v {
-            Value::String(s) => s,
-            Value::Number(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            _ => String::new(),
-        })
-        .collect())
+    let values: Option<Vec<Value>> = Option::deserialize(deserializer)?;
+    Ok(values.map(|vals| {
+        vals.into_iter()
+            .map(|v| match v {
+                Value::String(s) => s,
+                Value::Number(n) => n.to_string(),
+                Value::Bool(b) => b.to_string(),
+                _ => String::new(),
+            })
+            .collect()
+    }))
 }
 
 pub fn from_base64<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>

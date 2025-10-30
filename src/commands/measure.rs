@@ -360,13 +360,157 @@ fn configure_process(
         }
     }
 }
+
+fn process_single_test(
+    scenario: &mut Scenario,
+    mut test: Test,
+    index: usize,
+    counters: &mut Counters,
+    args: &MeasureArgs,
+    iterations: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let test_name = test.name.as_ref().unwrap();
+    let context = format!("[{}/{}]", scenario.name, test_name);
+    let affinity = test.affinity.clone().or(scenario.affinity.clone());
+    let niceness = test.niceness.or(scenario.niceness);
+    let measurement_mode = test
+        .measurement_mode
+        .or(scenario.measurement_mode)
+        .unwrap_or(MeasurementMode::Process);
+
+    info!("{} Build started", context);
+    match scenario.build_test(&mut test, index) {
+        Ok(ScenarioResult::Success { out, err }) => {
+            info!("{} Build success", context);
+            if !out.trim().is_empty() {
+                info!("{} Build output:\n{}", context, out.trim());
+            }
+            if !err.trim().is_empty() {
+                warn!("{} Build stderr (warnings):\n{}", context, err.trim());
+            }
+        }
+        Ok(ScenarioResult::Failed {
+            exit_code,
+            out,
+            err,
+        }) => {
+            error!("{} Build failed with exit code {}", context, exit_code);
+            if !err.trim().is_empty() {
+                error!("{} Build stderr:\n{}", context, err.trim());
+            }
+            if !out.trim().is_empty() {
+                error!("{} Build stdout:\n{}", context, out.trim());
+            }
+            return Ok(());
+        }
+        Err(err) => {
+            error!("{} Build error: {}", context, err);
+            return Ok(());
+        }
+    }
+
+    info!("{} Measurement start", context);
+    let measurements = match measurement_mode {
+        MeasurementMode::Internal => match measure_internal(
+            &scenario, &test, counters, &context, iterations, &affinity, niceness,
+        ) {
+            Ok(m) => m,
+            Err(err) => {
+                error!("{} Measurement error: {}", context, err);
+                return Ok(());
+            }
+        },
+        MeasurementMode::External => match measure_external(
+            &scenario, &test, counters, &context, iterations, &affinity, niceness,
+        ) {
+            Ok(m) => m,
+            Err(err) => {
+                error!("{} Measurement error: {}", context, err);
+                return Ok(());
+            }
+        },
+        MeasurementMode::Process => match measure_process(
+            &scenario, &test, counters, &context, iterations, &affinity, niceness,
+        ) {
+            Ok(m) => m,
+            Err(err) => {
+                error!("{} Measurement error: {}", context, err);
+                return Ok(());
+            }
+        },
+    };
+
+    let test_expected_stdout_path = scenario.test_expected_stdout_path(&test);
+    let scenario_expected_stdout_path = scenario.scenario_expected_stdout_path();
+    let should_verify =
+        test_expected_stdout_path.exists() || scenario_expected_stdout_path.exists();
+
+    if should_verify {
+        info!("{} Test started", context);
+        let verify_iterations = match measurement_mode {
+            MeasurementMode::Internal => iterations,
+            _ => 1,
+        };
+        match scenario.verify_test(&test, verify_iterations) {
+            Ok(ScenarioResult::Success { out, err }) => {
+                info!("{} Test success", context);
+                if !out.trim().is_empty() {
+                    info!("{} Test output:\n{}", context, out.trim());
+                }
+                if !err.trim().is_empty() {
+                    info!("{} Test stderr:\n{}", context, err.trim());
+                }
+            }
+            Ok(ScenarioResult::Failed {
+                exit_code,
+                out,
+                err,
+            }) => {
+                error!("{} Test failed with exit code {}", context, exit_code);
+                if !err.trim().is_empty() {
+                    error!("{} Test failure details:\n{}", context, err.trim());
+                }
+                if !out.trim().is_empty() {
+                    error!("{} Test failure details:\n{}", context, out.trim());
+                }
+                return Ok(());
+            }
+            Err(err) => {
+                error!("{} Test error: {}", context, err);
+                return Ok(());
+            }
+        }
+    }
+
+    let output_path = if let Some(ref user_path) = args.output {
+        if let Some(parent) = user_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        user_path.clone()
+    } else {
+        results_dir().join("results.csv")
+    };
+
+    for measurement in measurements {
+        measurement.write_to_csv(&output_path)?;
+    }
+    info!("Measurements saved: {}", output_path.display());
+
+    if args.sleep > 0 {
+        info!("{} Sleeping for {} seconds", context, args.sleep);
+        thread::sleep(Duration::from_secs(args.sleep as u64));
+    }
+
+    Ok(())
+}
+
 pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut counters = Counters::new(&args)?;
 
     for scenario_file in &args.scenarios {
         let scenario_path = scenario_file.as_path();
         let mut scenario = Scenario::try_from(scenario_path)?;
-        let tests = Test::iterate_from_file(scenario_path)?;
+        let mut tests = Test::iterate_from_file(scenario_path)?.peekable();
         let iterations: usize = args.iterations.into();
 
         let scenario_dir = scenario.scenario_dir();
@@ -376,177 +520,22 @@ pub fn run(args: MeasureArgs) -> Result<(), Box<dyn std::error::Error>> {
 
         init_shared_state()?;
 
-        for (index, test_result) in tests.enumerate() {
-            let mut test = test_result?;
-
-            if test.name.is_none() {
-                test.name = Some(index.to_string());
-            }
-            if test.arguments.is_empty() && !scenario.arguments.is_empty() {
-                test.arguments = scenario.arguments.clone();
-            }
-
-            let test_name = test.name.as_ref().unwrap();
-            let context = format!("[{}/{}]", scenario.name, test_name);
-            let affinity = test.affinity.clone().or(scenario.affinity.clone());
-            let niceness = test.niceness.or(scenario.niceness);
-            let measurement_mode = test
-                .measurement_mode
-                .or(scenario.measurement_mode)
-                .unwrap_or(MeasurementMode::Process);
-
-            info!("{} Build started", context);
-            match scenario.build_test(&mut test, index) {
-                Ok(ScenarioResult::Success { out, err }) => {
-                    info!("{} Build success", context);
-                    if !out.trim().is_empty() {
-                        info!("{} Build output:\n{}", context, out.trim());
-                    }
-                    if !err.trim().is_empty() {
-                        warn!("{} Build stderr (warnings):\n{}", context, err.trim());
-                    }
-                }
-                Ok(ScenarioResult::Failed {
-                    exit_code,
-                    out,
-                    err,
-                }) => {
-                    error!("{} Build failed with exit code {}", context, exit_code);
-                    if !err.trim().is_empty() {
-                        error!("{} Build stderr:\n{}", context, err.trim());
-                    }
-                    if !out.trim().is_empty() {
-                        error!("{} Build stdout:\n{}", context, out.trim());
-                    }
-                    continue;
-                }
-                Err(err) => {
-                    error!("{} Build error: {}", context, err);
-                    continue;
-                }
-            }
-
-            info!("{} Measurement start", context);
-            let measurements = match measurement_mode {
-                MeasurementMode::Internal => match measure_internal(
-                    &scenario,
-                    &test,
-                    &mut counters,
-                    &context,
-                    iterations,
-                    &affinity,
-                    niceness,
-                ) {
-                    Ok(m) => m,
-                    Err(err) => {
-                        error!("{} Measurement error: {}", context, err);
-                        continue;
-                    }
-                },
-                MeasurementMode::External => match measure_external(
-                    &scenario,
-                    &test,
-                    &mut counters,
-                    &context,
-                    iterations,
-                    &affinity,
-                    niceness,
-                ) {
-                    Ok(m) => m,
-                    Err(err) => {
-                        error!("{} Measurement error: {}", context, err);
-                        continue;
-                    }
-                },
-                MeasurementMode::Process => match measure_process(
-                    &scenario,
-                    &test,
-                    &mut counters,
-                    &context,
-                    iterations,
-                    &affinity,
-                    niceness,
-                ) {
-                    Ok(m) => m,
-                    Err(err) => {
-                        error!("{} Measurement error: {}", context, err);
-                        continue;
-                    }
-                },
-            };
-
-            let test_expected_stdout_path = scenario.test_expected_stdout_path(&test);
-            let scenario_expected_stdout_path = scenario.scenario_expected_stdout_path();
-            let should_verify =
-                test_expected_stdout_path.exists() || scenario_expected_stdout_path.exists();
-
-            if should_verify {
-                info!("{} Test started", context);
-                let verify_iterations = match measurement_mode {
-                    MeasurementMode::Internal => iterations,
-                    _ => 1,
-                };
-                match scenario.verify_test(&test, verify_iterations) {
-                    Ok(ScenarioResult::Success { out, err }) => {
-                        info!("{} Test success", context);
-                        if !out.trim().is_empty() {
-                            info!("{} Test output:\n{}", context, out.trim());
-                        }
-                        if !err.trim().is_empty() {
-                            info!("{} Test stderr:\n{}", context, err.trim());
-                        }
-                    }
-                    Ok(ScenarioResult::Failed {
-                        exit_code,
-                        out,
-                        err,
-                    }) => {
-                        error!("{} Test failed with exit code {}", context, exit_code);
-                        if !err.trim().is_empty() {
-                            error!("{} Test failure details:\n{}", context, err.trim());
-                        }
-                        if !out.trim().is_empty() {
-                            error!("{} Test failure details:\n{}", context, out.trim());
-                        }
-                        continue;
-                    }
-                    Err(err) => {
-                        error!("{} Test error: {}", context, err);
-                        continue;
-                    }
-                }
-            }
-
-            let output_path = if let Some(ref user_path) = args.output {
-                if let Some(parent) = user_path.parent() {
-                    if !parent.exists() {
-                        error!(
-                            "{} Output directory does not exist: {}",
-                            context,
-                            parent.display()
-                        );
-                        return Err(format!(
-                            "Output directory does not exist: {}",
-                            parent.display()
-                        )
-                        .into());
-                    }
-                }
-                user_path.clone()
-            } else {
-                results_dir().join("results.csv")
-            };
-
-            for measurement in measurements {
-                measurement.write_to_csv(&output_path)?;
-            }
-            info!("Measurements saved: {}", output_path.display());
-
-            if args.sleep > 0 {
-                info!("{} Sleeping for {} seconds", context, args.sleep);
-                thread::sleep(Duration::from_secs(args.sleep as u64));
+        if tests.peek().is_none() {
+            process_single_test(
+                &mut scenario,
+                Test::default(),
+                0,
+                &mut counters,
+                &args,
+                iterations,
+            )?;
+        } else {
+            for (index, test_result) in tests.enumerate() {
+                let test = test_result?;
+                process_single_test(&mut scenario, test, index, &mut counters, &args, iterations)?;
             }
         }
+
         cleanup_shared_memory();
     }
 

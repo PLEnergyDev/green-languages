@@ -208,9 +208,6 @@ impl Scenario {
         if test.name.is_none() {
             test.name = Some(index.to_string());
         }
-        if test.arguments.is_empty() && !self.arguments.is_empty() {
-            test.arguments = self.arguments.clone();
-        }
         if let Some(stdin_data) = self.stdin.take() {
             fs::write(self.scenario_stdin_path(), stdin_data)?;
         }
@@ -225,11 +222,14 @@ impl Scenario {
         }
 
         let mut command = self.build_command(&test);
-        for opt in &self.compile_options {
-            command.extend(opt.split_whitespace().map(|s| s.to_string()));
-        }
-        for opt in &test.compile_options {
-            command.extend(opt.split_whitespace().map(|s| s.to_string()));
+        let compile_opts = test
+            .compile_options
+            .as_ref()
+            .or(self.compile_options.as_ref());
+        if let Some(opts) = compile_opts {
+            for opt in opts {
+                command.extend(opt.split_whitespace().map(|s| s.to_string()));
+            }
         }
 
         let output = Command::new(&command[0])
@@ -264,7 +264,9 @@ impl Scenario {
     ) -> Result<Child, ScenarioError> {
         match self.language {
             Language::C | Language::Cpp | Language::Rust | Language::Cs => {
-                if !self.runtime_options.is_empty() || !test.runtime_options.is_empty() {
+                let has_runtime_opts =
+                    test.runtime_options.is_some() || self.runtime_options.is_some();
+                if has_runtime_opts {
                     return Err(ScenarioError::Io(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
                         format!(
@@ -278,14 +280,22 @@ impl Scenario {
         }
 
         let mut command = self.exec_command(&test)?;
-        for opt in &self.runtime_options {
-            command.extend(opt.split_whitespace().map(|s| s.to_string()));
+
+        let runtime_opts = test
+            .runtime_options
+            .as_ref()
+            .or(self.runtime_options.as_ref());
+        if let Some(opts) = runtime_opts {
+            for opt in opts {
+                command.extend(opt.split_whitespace().map(|s| s.to_string()));
+            }
         }
-        for opt in &test.runtime_options {
-            command.extend(opt.split_whitespace().map(|s| s.to_string()));
-        }
-        for arg in &test.arguments {
-            command.extend(arg.split_whitespace().map(|s| s.to_string()));
+
+        let args = test.arguments.as_ref().or(self.arguments.as_ref());
+        if let Some(arguments) = args {
+            for arg in arguments {
+                command.extend(arg.split_whitespace().map(|s| s.to_string()));
+            }
         }
 
         let stdout_path = self.stdout_path(&test);

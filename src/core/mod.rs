@@ -48,10 +48,8 @@ pub struct Scenario {
     pub language: Language,
     pub description: Option<String>,
     pub code: Option<String>,
-    #[serde(default)]
-    pub compile_options: Vec<String>,
-    #[serde(default)]
-    pub runtime_options: Vec<String>,
+    pub compile_options: Option<Vec<String>>,
+    pub runtime_options: Option<Vec<String>>,
     pub framework: Option<String>,
     #[serde(default)]
     pub dependencies: Vec<Dependency>,
@@ -61,7 +59,7 @@ pub struct Scenario {
     pub niceness: Option<i32>,
     pub measurement_mode: Option<MeasurementMode>,
     #[serde(default, deserialize_with = "deserialize_args")]
-    pub arguments: Vec<String>,
+    pub arguments: Option<Vec<String>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -135,16 +133,16 @@ impl ScenarioResult {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Default, Deserialize, Serialize)]
 pub struct Test {
     pub name: Option<String>,
     pub measurement_mode: Option<MeasurementMode>,
     #[serde(default)]
-    pub compile_options: Vec<String>,
+    pub compile_options: Option<Vec<String>>,
     #[serde(default)]
-    pub runtime_options: Vec<String>,
-    #[serde(default)]
-    pub arguments: Vec<String>,
+    pub runtime_options: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "deserialize_args")]
+    pub arguments: Option<Vec<String>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
