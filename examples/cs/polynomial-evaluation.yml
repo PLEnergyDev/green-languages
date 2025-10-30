@@ -1,0 +1,68 @@
+name: polynomial-evaluation
+language: cs
+description: |
+    This benchmark implements polynomial evaluation using Horner's rule.
+    A polynomial of degree n has the form: c₀ + c₁x + c₂x² + ... + cₙxⁿ
+    Instead of calculating each power of x separately (which would require n(n+1)/2 multiplications),
+    Horner's rule rearranges the calculation to: c₀ + x(c₁ + x(c₂ + ... + x(cₙ₋₁ + xcₙ)...))
+    This requires only n multiplications and n additions, making it much more efficient.
+code: |
+    using System;
+    using System.Runtime.InteropServices;
+
+    public class Program {
+        [DllImport("libmeasurements", EntryPoint = "start_measurement")]
+        public static extern bool start_measurement();
+
+        [DllImport("libmeasurements", EntryPoint = "end_measurement")]
+        public static extern void end_measurement();
+
+        static void run_benchmark(string[] args) {
+            int degree = int.Parse(args[0]);
+            double x = double.Parse(args[1]);
+            int repetitions = (args.Length > 2) ? int.Parse(args[2]) : 1000;
+
+            double[] coeffs = new double[degree + 1];
+            for (int i = 0; i <= degree; i++) {
+                coeffs[degree - i] = 1.0 / (i + 1);
+            }
+
+            double totalResult = 0.0;
+            for (int rep = 0; rep < repetitions; rep++) {
+                double result = 0.0;
+                for (int i = 0; i <= degree; i++) {
+                    result = coeffs[i] + x * result;
+                }
+                totalResult += result;
+            }
+
+            Console.WriteLine($"{totalResult / repetitions:F6}");
+        }
+
+        public static void Main(string[] args) {
+            while (true) {
+                if (!start_measurement()) break;
+                run_benchmark(args);
+                end_measurement();
+            }
+        }
+    }
+framework: net9.0
+compile_options:
+    - -c Release
+    - -p:ImplicitUsings=enable
+    - -p:Nullable=enable
+    - -p:AllowUnsafeBlocks=true
+    - -p:ServerGarbageCollection=true
+    - -p:ConcurrentGarbageCollection=true
+    - -p:OptimizationPreference=Speed
+    - -p:IlcInstructionSet=native
+arguments: [1000, 0.5, 1000000]
+expected_stdout: !!binary |
+    MS4zODYyOTQK
+---
+name: release
+measurement_mode: internal
+---
+name: release
+measurement_mode: external

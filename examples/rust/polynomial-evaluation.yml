@@ -1,0 +1,69 @@
+name: polynomial-evaluation
+language: rust
+description: |
+    This benchmark implements polynomial evaluation using Horner's rule.
+    A polynomial of degree n has the form: c₀ + c₁x + c₂x² + ... + cₙxⁿ
+    Instead of calculating each power of x separately (which would require n(n+1)/2 multiplications),
+    Horner's rule rearranges the calculation to: c₀ + x(c₁ + x(c₂ + ... + x(cₙ₋₁ + xcₙ)...))
+    This requires only n multiplications and n additions, making it much more efficient.
+code: |
+    #[link(name = "measurements")]
+    unsafe extern "C" {
+        fn start_measurement() -> bool;
+        fn end_measurement();
+    }
+
+    fn run_benchmark(args: &[String]) {
+        let degree: usize = args.get(0)
+            .expect("Missing argument")
+            .parse()
+            .expect("Invalid integer");
+        let x: f64 = args.get(1)
+            .expect("Missing argument")
+            .parse()
+            .expect("Invalid float");
+        let repetitions: usize = args.get(2)
+            .map(|s| s.parse().expect("Invalid integer"))
+            .unwrap_or(1000);
+
+        let mut coeffs = vec![0.0; degree + 1];
+        for i in 0..=degree {
+            coeffs[degree - i] = 1.0 / (i + 1) as f64;
+        }
+
+        let mut total_result = 0.0;
+        for _ in 0..repetitions {
+            let mut result = 0.0;
+            for i in 0..=degree {
+                result = coeffs[i] + x * result;
+            }
+            total_result += result;
+        }
+
+        println!("{:.6}", total_result / repetitions as f64);
+    }
+
+    fn main() {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        loop {
+            unsafe {
+                if !start_measurement() {
+                    break;
+                }
+            }
+            run_benchmark(&args);
+            unsafe {
+                end_measurement();
+            }
+        }
+    }
+arguments: [1000, 0.5, 1000000]
+compile_options: [--release]
+expected_stdout: !!binary |
+    MS4zODYyOTQK
+---
+name: release
+measurement_mode: internal
+---
+name: release
+measurement_mode: external

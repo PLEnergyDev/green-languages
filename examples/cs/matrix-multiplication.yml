@@ -1,0 +1,75 @@
+name: matrix-multiplication
+language: cs
+description: |
+    Create two square matrices of size N×N.
+    Each cell within these two matrices will be initialized with the sum of their row and column indices.
+    Multiply the two matrices and output the contents of the last cell.
+code: |
+    using System;
+    using System.Runtime.InteropServices;
+
+    public class Program {
+        [DllImport("libmeasurements", EntryPoint = "start_measurement")]
+        public static extern bool start_measurement();
+
+        [DllImport("libmeasurements", EntryPoint = "end_measurement")]
+        public static extern void end_measurement();
+
+        static void run_benchmark(string[] args) {
+            int n = int.Parse(args[0]);
+            int repetitions = (args.Length > 1) ? int.Parse(args[1]) : 1000;
+
+            double[] A = new double[n * n];
+            double[] B = new double[n * n];
+            double[] C = new double[n * n];
+
+            for (int i = 0; i < n; i++) {
+                for (int j = 0; j < n; j++) {
+                    A[i*n + j] = B[i*n + j] = i + j;
+                }
+            }
+
+            double totalResult = 0.0;
+            for (int rep = 0; rep < repetitions; rep++) {
+                for (int i = 0; i < n; i++) {
+                    for (int j = 0; j < n; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < n; k++) {
+                            sum += A[i*n + k] * B[k*n + j];
+                        }
+                        C[i*n + j] = sum;
+                    }
+                }
+                totalResult += C[n*n - 1];
+            }
+
+            Console.WriteLine($"{totalResult / repetitions:F0}");
+        }
+
+        public static void Main(string[] args) {
+            while (true) {
+                if (!start_measurement()) break;
+                run_benchmark(args);
+                end_measurement();
+            }
+        }
+    }
+framework: net9.0
+compile_options:
+    - -c Release
+    - -p:ImplicitUsings=enable
+    - -p:Nullable=enable
+    - -p:AllowUnsafeBlocks=true
+    - -p:ServerGarbageCollection=true
+    - -p:ConcurrentGarbageCollection=true
+    - -p:OptimizationPreference=Speed
+    - -p:IlcInstructionSet=native
+arguments: [200, 1000]
+expected_stdout: !!binary |
+    MTg0ODcxMDAK
+---
+name: release
+measurement_mode: internal
+---
+name: release
+measurement_mode: external
