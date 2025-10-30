@@ -7,15 +7,16 @@
 Provide a scenario and enable a performance metric to the `gl` CLI tool:
 
 ```sh
-gl <scenario_filename.yml> --rapl-pkg
+gl fibonacci.yml --rapl-pkg --rapl-cores --time
 ```
 
-Upon success, the `results` directory is created containing `results.csv`, `gl.log` and build artifacts.
+Upon success, the `results` directory is created containing `results.csv`, `gl.log` and build artifacts:
 
-Use `--help` for more options:
-
-```sh
-gl --help
+```csv
+scenario,language,test,mode,iteration,time,pkg,cores,gpu,dram,psys,cycles,cache_misses,branch_misses,ended
+fibonacci,c,30 O3,internal,1,1317834,0.0513916015625,0.041259765625,,,,,,,1761828780087218
+fibonacci,c,35 O3,internal,1,11007968,0.365234375,0.283935546875,,,,,,,1761828780157678
+fibonacci,c,40,internal,1,545718361,13.006591796875,10.04339599609375,,,,,,,1761828780731557
 ```
 
 ## Available Performance Metrics
@@ -36,16 +37,22 @@ gl --help
 
 ## Scenarios
 
-A scenario is a **YML file** holding data to execute a program written in a programming language. Example of a basic scenario written in C. Per default, it measures the performance metrics of the whole program.
+A scenario is a **YML file** holding data to execute a program written in a programming language. A basic example of a scenario written in C is shown. Per default, it measures the performance metrics of the whole program.
 
 ```yml
-name: hello-world
+name: fibonacci
 language: c
 code: |
     #include <stdio.h>
 
+    int fib(int n) {
+        if (n <= 1) return n;
+        return fib(n - 1) + fib(n - 2);
+    }
+
     int main() {
-        printf("Hello, World!");
+        int result = fib(35);
+        printf("%d\n", result);
         return 0;
     }
 ```
@@ -53,39 +60,53 @@ code: |
 To measure individual lines of code in C, use `start_measurement()` and `end_measurement()` from the `measurement.h` library and enable the `measurement_mode: external` flag.
 
 ```yml
-name: hello-world
+name: fibonacci
 language: c
 code: |
     #include <stdio.h>
     #include <measurements.h>
 
+    int fib(int n) {
+        if (n <= 1) return n;
+        return fib(n - 1) + fib(n - 2);
+    }
+
     int main() {
         start_measurement();
-        printf("Hello, World!");
+        int result = fib(35);
         end_measurement();
+        printf("%d\n", result);
         return 0;
     }
 measurement_mode: external
+
 ```
 
 To measure individual lines of code in C multiple times, put the markers in an loop and enable the `measurement_mode: internal` flag. Then use `gl <scenario_filename.yml> --rapl-pkg --iterations 10` with `-i, --iterations` and the iteration count. This will measure `printf("Hello, World!");` 10 times within the same process.
 
 ```yml
-name: hello-world
+name: fibonacci
 language: c
 code: |
     #include <stdio.h>
     #include <measurements.h>
 
+    int fib(int n) {
+        if (n <= 1) return n;
+        return fib(n - 1) + fib(n - 2);
+    }
+
     int main() {
         while (1) {
             if (start_measurement() == 0) break;
-            printf("Hello, World!");
+            int result = fib(35);
             end_measurement();
+            printf("%d\n", result);
         }
         return 0;
     }
 measurement_mode: internal
+
 ```
 
 ## Supported Programming Languages
@@ -166,44 +187,47 @@ To define multiple tests within for same scenario, enumerate the tests at the en
 > A current limitation is that `expected_stdout` needs to be in `base64` format:
 
 ```yml
-name: hello-world
+name: fibonacci
 language: c
 code: |
     #include <stdio.h>
+    #include <stdlib.h>
     #include <measurements.h>
 
+    int fib(int n) {
+        if (n <= 1) return n;
+        return fib(n - 1) + fib(n - 2);
+    }
+
     int main(int argc, char **argv) {
+        int n = argc > 1 ? atoi(argv[1]) : 35;
+        
         while (1) {
             if (start_measurement() == 0) break;
-
-            if (argc > 1) {
-                printf("Hello, %s!\n", argv[1]);
-            } else {
-                printf("Hello, World!\n");
-            }
-
+            int result = fib(n);
             end_measurement();
+            printf("%d\n", result);
         }
         return 0;
     }
 measurement_mode: internal
 compile_options: [-O3, -march=native]
 ---
-name: Everyone Optimized
-arguments: [Everyone]
+name: 30 O3
+arguments: [30]
 expected_stdout: !!binary |
-    SGVsbG8sIEV2ZXJ5b25lIQo=
+    ODMyMDQwCg==
 ---
-name: Nobody Optimized
-arguments: [Nobody]
+name: 35 O3
+arguments: [35]
 expected_stdout: !!binary |
-    SGVsbG8sIE5vYm9keSEK
-measurement_mode: external
+    OTIyNzQ2NQo=
 ---
-name: World Unoptimized
+name: 40
+arguments: [40]
 compile_options: []
 expected_stdout: !!binary |
-    SGVsbG8sIFdvcmxkIQo=
+    MTAyMzM0MTU1Cg==
 ```
 
 ## All Scenario Fields
