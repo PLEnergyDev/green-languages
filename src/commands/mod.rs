@@ -76,7 +76,9 @@ pub struct Measurement {
     pub dram: Option<f64>,
     pub psys: Option<f64>,
     pub cycles: Option<u64>,
-    pub cache_misses: Option<u64>,
+    pub l1d_misses: Option<u64>,
+    pub l1i_misses: Option<u64>,
+    pub llc_misses: Option<u64>,
     pub branch_misses: Option<u64>,
     pub ended: i64,
 }

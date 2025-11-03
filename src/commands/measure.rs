@@ -7,7 +7,7 @@ use measurements::share::cleanup_shared_memory;
 use measurements::signal::*;
 use nix::sched::{sched_setaffinity, CpuSet};
 use nix::unistd::Pid;
-use perf_event::events::{Hardware, Rapl};
+use perf_event::events::{Cache, CacheOp, CacheResult, Hardware, Rapl, WhichCache};
 use perf_event::{Builder, Counter, Group};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -190,11 +190,30 @@ impl HardwareCounters {
         }
 
         if args.hw_all || args.hw_cache_misses {
-            let counter = Builder::new()
-                .group(&mut group)
-                .kind(Hardware::CACHE_MISSES)
-                .build()?;
-            counters.insert("cache_misses", counter);
+            const L1D_MISS: Cache = Cache {
+                which: WhichCache::L1D,
+                operation: CacheOp::READ,
+                result: CacheResult::MISS,
+            };
+            const L1I_MISS: Cache = Cache {
+                which: WhichCache::L1I,
+                operation: CacheOp::READ,
+                result: CacheResult::MISS,
+            };
+            const LLC_MISS: Cache = Cache {
+                which: WhichCache::LL,
+                operation: CacheOp::READ,
+                result: CacheResult::MISS,
+            };
+
+            let l1d_counter = Builder::new().group(&mut group).kind(L1D_MISS).build()?;
+            counters.insert("l1d_misses", l1d_counter);
+
+            let l1i_counter = Builder::new().group(&mut group).kind(L1I_MISS).build()?;
+            counters.insert("l1i_misses", l1i_counter);
+
+            let llc_counter = Builder::new().group(&mut group).kind(LLC_MISS).build()?;
+            counters.insert("llc_misses", llc_counter);
         }
 
         if args.hw_all || args.hw_branch_misses {
@@ -220,8 +239,14 @@ impl HardwareCounters {
                 "cycles" => {
                     measurement.cycles = Some(raw_value);
                 }
-                "cache_misses" => {
-                    measurement.cache_misses = Some(raw_value);
+                "l1d_misses" => {
+                    measurement.l1d_misses = Some(raw_value);
+                }
+                "l1i_misses" => {
+                    measurement.l1i_misses = Some(raw_value);
+                }
+                "llc_misses" => {
+                    measurement.llc_misses = Some(raw_value);
                 }
                 "branch_misses" => {
                     measurement.branch_misses = Some(raw_value);
@@ -314,7 +339,9 @@ impl Counters {
             dram: None,
             psys: None,
             cycles: None,
-            cache_misses: None,
+            l1d_misses: None,
+            l1i_misses: None,
+            llc_misses: None,
             branch_misses: None,
             ended,
         };
