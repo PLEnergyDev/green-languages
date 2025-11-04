@@ -1,9 +1,7 @@
-use clap::Parser;
 use flexi_logger::{DeferredNow, FileSpec, Logger, Record, WriteMode};
-use green_languages::commands::measure::run;
-use green_languages::commands::Cli;
 use green_languages::config::Config;
 use green_languages::core::util::results_dir;
+use green_languages::MeasureArgs;
 use std::io::{Error, Write};
 
 fn custom_format(w: &mut dyn Write, now: &mut DeferredNow, record: &Record) -> Result<(), Error> {
@@ -17,12 +15,12 @@ fn custom_format(w: &mut dyn Write, now: &mut DeferredNow, record: &Record) -> R
 }
 
 fn configure_logger() -> Result<(), Box<dyn std::error::Error>> {
-    let file_spec = FileSpec::default()
+    let spec = FileSpec::default()
         .directory(results_dir())
         .basename("gl")
         .suppress_timestamp();
     Logger::try_with_str("info")?
-        .log_to_file(file_spec)
+        .log_to_file(spec)
         .write_mode(WriteMode::Direct)
         .format(custom_format)
         .append()
@@ -32,13 +30,11 @@ fn configure_logger() -> Result<(), Box<dyn std::error::Error>> {
 
 fn main() {
     Config::global();
-    let cli = Cli::parse();
     if let Err(err) = configure_logger() {
         eprintln!("Failed to configure logger: {}", err);
         std::process::exit(1);
     }
-    let result = run(cli.measure);
-    if let Err(err) = result {
+    if let Err(err) = MeasureArgs::handle_args() {
         eprintln!("{}", err);
         std::process::exit(1);
     }

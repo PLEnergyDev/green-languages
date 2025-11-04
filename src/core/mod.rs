@@ -1,8 +1,3 @@
-pub mod language;
-pub mod scenario;
-pub mod test;
-pub mod util;
-
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use strum::{Display, EnumIter, EnumString};
@@ -160,3 +155,8 @@ pub struct Test {
     pub affinity: Option<Vec<usize>>,
     pub niceness: Option<i32>,
 }
+
+pub mod language;
+pub mod scenario;
+pub mod test;
+pub mod util;
