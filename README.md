@@ -7,33 +7,30 @@
 Provide a scenario and enable a performance metric to the `gl` CLI tool:
 
 ```sh
-gl fibonacci.yml --rapl-pkg --rapl-cores --time
+gl fib.yml --rapl --cycles --branch-misses --cache-misses --cstates -i5
 ```
 
-Upon success, the `results` directory is created containing `results.csv`, `gl.log` and build artifacts:
+Upon success, the `results` dir is created containing `results.csv`, `gl.log` and build artifacts. Contents of `results.csv`:
 
 ```csv
-scenario,language,test,mode,iteration,time,pkg,cores,gpu,dram,psys,cycles,cache_misses,branch_misses,ended
-fibonacci,c,30 O3,internal,1,1317834,0.0513916015625,0.041259765625,,,,,,,1761828780087218
-fibonacci,c,35 O3,internal,1,11007968,0.365234375,0.283935546875,,,,,,,1761828780157678
-fibonacci,c,40,internal,1,545718361,13.006591796875,10.04339599609375,,,,,,,1761828780731557
+scenario,language,test,mode,iteration,time,pkg,cores,gpu,dram,psys,cycles,l1d_misses,l1i_misses,llc_misses,branch_misses,c1_core_residency,c3_core_residency,c6_core_residency,c7_core_residency,c2_pkg_residency,c3_pkg_residency,c6_pkg_residency,c8_pkg_residency,c10_pkg_residency,ended
+fibonacci,c,1,process,1,56288,1.087,0.793,0.0,,1.84,14850497,665,1613,27,342,731518242,,1614601814,876914016,0,0,0,0,0,1762346358725229
+fibonacci,c,1,process,2,57025,0.905,0.667,0.0,,1.581,16596192,268,1274,3,339,420737148,,1701854796,1236024600,0,0,0,0,0,1762346358786143
+fibonacci,c,1,process,3,58306,0.997,0.753,0.0,,1.692,9990690,280,1358,0,345,303858282,,1724073718,1367192966,0,0,0,0,0,1762346358848497
+fibonacci,c,1,process,4,56242,0.654,0.421,0.0,,1.266,9598776,268,1258,1,348,207767508,,1578030626,1575898272,0,0,0,0,0,1762346358909304
+fibonacci,c,1,process,5,53974,0.83,0.606,0.0,,1.456,12048084,277,1372,0,343,266517498,,1540066812,1350901600,0,0,0,0,0,1762346358967603
+
 ```
 
 ## Available Performance Metrics
 
-| Flag                 | Metric                | Unit        | Description                               |
-| -------------------- | --------------------- | ----------- | ----------------------------------------- |
-| `--time`             | Execution time        | Nanoseconds | Wall-clock execution duration             |
-| `--rapl-pkg`         | Package energy        | Joules      | CPU package power consumption             |
-| `--rapl-cores`       | CPU cores energy      | Joules      | CPU cores power consumption               |
-| `--rapl-gpu`         | GPU energy            | Joules      | Integrated GPU power consumption          |
-| `--rapl-dram`        | DRAM energy           | Joules      | Memory power consumption                  |
-| `--rapl-psys`        | Platform energy       | Joules      | Total platform power consumption          |
-| `--rapl-all`         | All RAPL domains      |             | Enables all available RAPL domains        |
-| `--hw-cycles`        | CPU cycles            | Count       | Total CPU cycles executed                 |
-| `--hw-cache-misses`  | Cache misses          | Count       | Last-level cache miss count               |
-| `--hw-branch-misses` | Branch misses         | Count       | Branch misprediction count                |
-| `--hw-all`           | All hardware counters |             | Enables all hardware performance counters |
+| Flag              | Metric                       | Unit              |
+| ----------------- | ---------------------------- | ----------------- |
+| `--rapl`          | All RAPL energy domains      | Joules            |
+| `--cycles`        | CPU cycles & wall-clock time | Count/Nanoseconds |
+| `--cache-misses`  | L1d, L1i, LLC loads misses   | Count             |
+| `--branch-misses` | Branch misses                | Count             |
+| `--cstates`       | All CPU low power C-states   | Count             |
 
 ## Scenarios
 
@@ -82,7 +79,7 @@ measurement_mode: external
 
 ```
 
-To measure individual lines of code in C multiple times, put the markers in an loop and enable the `measurement_mode: internal` flag. Then use `gl <scenario_filename.yml> --rapl-pkg --iterations 10` with `-i, --iterations` and the iteration count. This will measure `printf("Hello, World!");` 10 times within the same process.
+To measure individual lines of code in C multiple times, put the markers in an loop and enable the `measurement_mode: internal` flag. Then use `gl fib.yml --rapl -i10` with `-i, --iterations` and the iteration count. This will measure `printf("Hello, World!");` 10 times within the same process.
 
 ```yml
 name: fibonacci

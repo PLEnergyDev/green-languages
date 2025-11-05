@@ -1,8 +1,27 @@
-use crate::MeasureArgs;
+use crate::core::util::results_dir;
+use crate::core::{MeasurementMode, Scenario, ScenarioResult, Test};
+use crate::{MeasureCommand, Measurement};
+use csv::WriterBuilder;
+use log::{error, info, warn};
+use measurements::share::cleanup_shared_memory;
+use measurements::signal::*;
+use nix::sched::{sched_setaffinity, CpuSet};
+use nix::unistd::Pid;
 use perf_event::events::{Cache, CacheId, CacheOp, CacheResult, Dynamic, Hardware, Software};
 use perf_event::{Builder, Counter, Group};
 use perf_event_data::ReadFormat;
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::path::PathBuf;
+use std::process::{Child, Output};
+use std::time::Instant;
+
+trait Bundle {
+    fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>>;
+}
 
 struct RaplCounter {
     counter: Counter,
@@ -21,6 +40,11 @@ struct MissesBundle {
 
 struct CStateBundle {
     counters: HashMap<String, Counter>,
+}
+
+struct CyclesBundle {
+    counter: Counter,
+    start_time: Option<Instant>,
 }
 
 impl RaplBundle {
@@ -63,28 +87,30 @@ impl RaplBundle {
 
         Ok(Self { group, counters })
     }
+}
 
-    pub fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+impl Bundle for RaplBundle {
+    fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.group.enable()?;
         Ok(())
     }
 
-    pub fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.group.disable()?;
         Ok(())
     }
 
-    pub fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.group.reset()?;
         Ok(())
     }
 
-    pub fn read(&mut self) -> Result<HashMap<String, f64>, Box<dyn std::error::Error>> {
+    fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
         let mut results = HashMap::new();
         for (name, rapl_counter) in &mut self.counters {
             let raw = rapl_counter.counter.read()?;
             let scaled = raw as f64 * rapl_counter.scale;
-            results.insert(name.to_string(), scaled);
+            results.insert(name.to_string(), format!("{:.3}", scaled));
         }
         Ok(results)
     }
@@ -133,27 +159,29 @@ impl MissesBundle {
 
         Ok(Self { group, counters })
     }
+}
 
-    pub fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+impl Bundle for MissesBundle {
+    fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.group.enable()?;
         Ok(())
     }
 
-    pub fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.group.disable()?;
         Ok(())
     }
 
-    pub fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.group.reset()?;
         Ok(())
     }
 
-    pub fn read(&mut self) -> Result<HashMap<String, u64>, Box<dyn std::error::Error>> {
+    fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
         let mut results = HashMap::new();
         for (name, counter) in &mut self.counters {
             let value = counter.read()?;
-            results.insert(name.to_string(), value);
+            results.insert(name.to_string(), value.to_string());
         }
         Ok(results)
     }
@@ -219,29 +247,31 @@ impl CStateBundle {
 
         Ok(Self { counters })
     }
+}
 
-    pub fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+impl Bundle for CStateBundle {
+    fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for counter in self.counters.values_mut() {
             counter.enable()?;
         }
         Ok(())
     }
 
-    pub fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for counter in self.counters.values_mut() {
             counter.disable()?;
         }
         Ok(())
     }
 
-    pub fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for counter in self.counters.values_mut() {
             counter.reset()?;
         }
         Ok(())
     }
 
-    pub fn read(&mut self) -> Result<HashMap<String, u64>, Box<dyn std::error::Error>> {
+    fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
         let mut aggregated: HashMap<String, u64> = HashMap::new();
 
         for (name, counter) in &mut self.counters {
@@ -255,89 +285,619 @@ impl CStateBundle {
                         .unwrap_or(s);
                     format!("cstate_core/{}", core_event)
                 }
-                s if s.starts_with("cstate_pkg/") => {
-                    let pkg_event = s
-                        .strip_prefix("cstate_pkg/")
-                        .and_then(|s| s.split('_').next())
-                        .unwrap_or(s);
-                    format!("cstate_pkg/{}", pkg_event)
-                }
+                s if s.starts_with("cstate_pkg/") => s.to_string(),
                 _ => name.clone(),
             };
 
             *aggregated.entry(event_name).or_insert(0) += value;
         }
 
-        Ok(aggregated)
+        let mut results = HashMap::new();
+        for (name, value) in aggregated {
+            results.insert(name, value.to_string());
+        }
+        Ok(results)
     }
 }
 
-impl MeasureArgs {
-    pub fn handle_args() -> Result<(), Box<dyn std::error::Error>> {
+impl CyclesBundle {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        let counter = Builder::new(Hardware::CPU_CYCLES)
+            .exclude_kernel(false)
+            .exclude_hv(false)
+            .build()?;
+
+        Ok(Self {
+            counter,
+            start_time: None,
+        })
+    }
+}
+
+impl Bundle for CyclesBundle {
+    fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.start_time = Some(Instant::now());
+        self.counter.enable()?;
+        Ok(())
+    }
+
+    fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.counter.disable()?;
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.start_time = None;
+        self.counter.reset()?;
+        Ok(())
+    }
+
+    fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
+        let mut results = HashMap::new();
+
+        let cycles = self.counter.read()?;
+        results.insert("cpu_cycles".to_string(), cycles.to_string());
+
+        if let Some(start) = self.start_time {
+            let elapsed_micros = start.elapsed().as_micros() as u64;
+            results.insert("time".to_string(), elapsed_micros.to_string());
+        }
+
+        Ok(results)
+    }
+}
+
+impl Measurement {
+    fn write_to_csv(&self, output_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        let file_exists = output_path.exists();
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(output_path)?;
+        let mut wtr = WriterBuilder::new()
+            .has_headers(!file_exists)
+            .from_writer(file);
+
+        wtr.serialize(self)?;
+        wtr.flush()?;
+
+        Ok(())
+    }
+
+    fn new(scenario: &Scenario, test: &Test, mode: MeasurementMode, iteration: usize) -> Self {
+        Self {
+            language: scenario.language.to_string(),
+            scenario: scenario.name.clone(),
+            test: test.name.as_ref().unwrap().clone(),
+            mode,
+            iteration,
+            time: None,
+            pkg: None,
+            cores: None,
+            gpu: None,
+            dram: None,
+            psys: None,
+            cycles: None,
+            l1d_misses: None,
+            l1i_misses: None,
+            llc_misses: None,
+            branch_misses: None,
+            c1_core_residency: None,
+            c3_core_residency: None,
+            c6_core_residency: None,
+            c7_core_residency: None,
+            c2_pkg_residency: None,
+            c3_pkg_residency: None,
+            c6_pkg_residency: None,
+            c8_pkg_residency: None,
+            c10_pkg_residency: None,
+            ended: chrono::Utc::now().timestamp_micros(),
+        }
+    }
+}
+
+impl MeasureCommand {
+    pub fn handle() -> Result<(), Box<dyn std::error::Error>> {
         let args = <Self as clap::Parser>::parse();
-        let mut rapl = if args.rapl {
-            Some(RaplBundle::new()?)
-        } else {
-            None
-        };
+        let mut bundles: Vec<Box<dyn Bundle>> = vec![];
 
-        let mut hardware = if args.cache_misses || args.branch_misses {
-            Some(MissesBundle::new(args.cache_misses, args.branch_misses)?)
-        } else {
-            None
-        };
-
-        let mut cstates = if args.cstates {
-            Some(CStateBundle::new()?)
-        } else {
-            None
-        };
-
-        let duration = std::env::args()
-            .nth(1)
-            .and_then(|arg| arg.parse().ok())
-            .unwrap_or(1.0);
-
-        if let Some(ref mut r) = rapl {
-            r.enable()?;
+        if args.rapl {
+            bundles.push(Box::new(RaplBundle::new()?));
         }
-        if let Some(ref mut h) = hardware {
-            h.enable()?;
+        if args.cache_misses || args.branch_misses {
+            bundles.push(Box::new(MissesBundle::new(
+                args.cache_misses,
+                args.branch_misses,
+            )?));
         }
-        if let Some(ref mut c) = cstates {
-            c.enable()?;
+        if args.cstates {
+            bundles.push(Box::new(CStateBundle::new()?));
+        }
+        if args.cycles {
+            bundles.push(Box::new(CyclesBundle::new()?));
         }
 
-        std::thread::sleep(std::time::Duration::from_secs_f64(duration));
+        fn write_measurements(
+            measurements: Option<Vec<Measurement>>,
+            output_path: &PathBuf,
+        ) -> Result<(), Box<dyn std::error::Error>> {
+            if let Some(measurements) = measurements {
+                for measurement in measurements {
+                    measurement.write_to_csv(output_path)?;
+                }
+            }
+            Ok(())
+        }
 
-        if let Some(ref mut r) = rapl {
-            r.disable()?;
-        }
-        if let Some(ref mut h) = hardware {
-            h.disable()?;
-        }
-        if let Some(ref mut c) = cstates {
-            c.disable()?;
+        for scenario_path_str in &args.scenarios {
+            let scenario_path = scenario_path_str.as_path();
+            let mut scenario = Scenario::try_from(scenario_path)?;
+            let tests = Test::iterate_from_file(scenario_path)?.peekable();
+            let iterations: usize = args.iterations.into();
+            let scenario_dir = scenario.scenario_dir();
+            let mut has_tests = false;
+
+            if scenario_dir.exists() {
+                fs::remove_dir_all(&scenario_dir)?;
+            }
+
+            init_shared_state()?;
+
+            let output_path = if let Some(ref user_path) = args.output {
+                if let Some(parent) = user_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                user_path.clone()
+            } else {
+                results_dir().join("results.csv")
+            };
+
+            for (index, test_result) in tests.enumerate() {
+                has_tests = true;
+                let mut test = test_result?;
+
+                if test.name.is_none() {
+                    test.name = Some((index + 1).to_string());
+                }
+
+                let measurements =
+                    Self::process_test(&mut scenario, test, &mut bundles, 0, iterations);
+
+                if measurements.is_some() {
+                    write_measurements(measurements, &output_path)?;
+
+                    if args.sleep > 0 {
+                        std::thread::sleep(std::time::Duration::from_secs(args.sleep as u64));
+                    }
+                }
+            }
+
+            if !has_tests {
+                let mut test = Test::default();
+                test.name = Some("1".to_string());
+                let measurements =
+                    Self::process_test(&mut scenario, test, &mut bundles, 0, iterations);
+
+                if measurements.is_some() {
+                    write_measurements(measurements, &output_path)?;
+
+                    if args.sleep > 0 {
+                        std::thread::sleep(std::time::Duration::from_secs(args.sleep as u64));
+                    }
+                }
+            }
+
+            cleanup_shared_memory();
         }
 
-        if let Some(ref mut r) = rapl {
-            println!("RAPL Energy Measurements:");
-            for (name, value) in r.read()? {
-                println!("  {}: {:.3} J", name, value);
+        Ok(())
+    }
+
+    fn process_test(
+        scenario: &mut Scenario,
+        mut test: Test,
+        bundles: &mut Vec<Box<dyn Bundle>>,
+        iter_index: usize,
+        iterations: usize,
+    ) -> Option<Vec<Measurement>> {
+        let test_name = test.name.as_ref().unwrap();
+        let context = format!("[{}/{}/{}]", scenario.language, scenario.name, test_name);
+        let measurement_mode = test
+            .measurement_mode
+            .or(scenario.measurement_mode)
+            .unwrap_or(MeasurementMode::Process);
+        let affinity = test.affinity.clone().or(scenario.affinity.clone());
+        let niceness = test.niceness.or(scenario.niceness);
+
+        info!("{} Build started", context);
+        match scenario.build_test(&mut test, iter_index) {
+            Ok(ScenarioResult::Success { out, err }) => {
+                info!("{} Build success", context);
+                if !out.trim().is_empty() {
+                    info!("{} Build output:\n{}", context, out.trim());
+                }
+                if !err.trim().is_empty() {
+                    warn!("{} Build stderr (warnings):\n{}", context, err.trim());
+                }
+            }
+            Ok(ScenarioResult::Failed {
+                exit_code,
+                out,
+                err,
+            }) => {
+                error!("{} Build failed with exit code {}", context, exit_code);
+                if !err.trim().is_empty() {
+                    error!("{} Build stderr:\n{}", context, err.trim());
+                }
+                if !out.trim().is_empty() {
+                    error!("{} Build stdout:\n{}", context, out.trim());
+                }
+                return None;
+            }
+            Err(err) => {
+                error!("{} Build error: {}", context, err);
+                return None;
             }
         }
 
-        if let Some(ref mut h) = hardware {
-            println!("\nHardware Counters:");
-            for (name, value) in h.read()? {
-                println!("  {}: {}", name, value);
+        info!("{} Measurement start", context);
+        let measurements = match measurement_mode {
+            MeasurementMode::Internal => Self::measure_internal(
+                scenario, &test, bundles, iterations, &affinity, niceness, &context,
+            ),
+            MeasurementMode::External => Self::measure_external(
+                scenario, &test, bundles, iterations, &affinity, niceness, &context,
+            ),
+            MeasurementMode::Process => Self::measure_process(
+                scenario, &test, bundles, iterations, &affinity, niceness, &context,
+            ),
+        };
+
+        if measurements.is_none() {
+            return None;
+        }
+
+        let test_expected_stdout_path = scenario.test_expected_stdout_path(&test);
+        let scenario_expected_stdout_path = scenario.scenario_expected_stdout_path();
+        let should_verify =
+            test_expected_stdout_path.exists() || scenario_expected_stdout_path.exists();
+
+        if should_verify {
+            info!("{} Test started", context);
+            let verify_iterations = match measurement_mode {
+                MeasurementMode::Internal => iterations,
+                _ => 1,
+            };
+            match scenario.verify_test(&test, verify_iterations) {
+                Ok(ScenarioResult::Success { out, err }) => {
+                    info!("{} Test success", context);
+                    if !out.trim().is_empty() {
+                        info!("{} Test output:\n{}", context, out.trim());
+                    }
+                    if !err.trim().is_empty() {
+                        info!("{} Test stderr:\n{}", context, err.trim());
+                    }
+                }
+                Ok(ScenarioResult::Failed {
+                    exit_code,
+                    out,
+                    err,
+                }) => {
+                    error!("{} Test failed with exit code {}", context, exit_code);
+                    if !err.trim().is_empty() {
+                        error!("{} Test failure details:\n{}", context, err.trim());
+                    }
+                    if !out.trim().is_empty() {
+                        error!("{} Test failure details:\n{}", context, out.trim());
+                    }
+                    return None;
+                }
+                Err(err) => {
+                    error!("{} Test error: {}", context, err);
+                    return None;
+                }
             }
         }
 
-        if let Some(ref mut c) = cstates {
-            println!("\nCstate Counters:");
-            for (name, value) in c.read()? {
-                println!("  {}: {}", name, value);
+        measurements
+    }
+
+    fn reset_and_enable_bundles(
+        bundles: &mut Vec<Box<dyn Bundle>>,
+        context: &str,
+    ) -> Result<(), String> {
+        for bundle in bundles.iter_mut() {
+            bundle
+                .reset()
+                .map_err(|e| format!("{} Failed to reset event counters: {}", context, e))?;
+            bundle
+                .enable()
+                .map_err(|e| format!("{} Failed to enable event counters: {}", context, e))?;
+        }
+        Ok(())
+    }
+
+    fn disable_bundles(bundles: &mut Vec<Box<dyn Bundle>>, context: &str) -> Result<(), String> {
+        for bundle in bundles.iter_mut() {
+            bundle
+                .disable()
+                .map_err(|e| format!("{} Failed to disable event counters: {}", context, e))?;
+        }
+        Ok(())
+    }
+
+    fn populate_measurement(
+        measurement: &mut Measurement,
+        bundles: &mut Vec<Box<dyn Bundle>>,
+        context: &str,
+    ) -> bool {
+        for bundle in bundles.iter_mut() {
+            match bundle.read() {
+                Ok(data) => {
+                    for (key, value) in data {
+                        match key.as_str() {
+                            "energy-pkg" => measurement.pkg = value.parse().ok(),
+                            "energy-cores" => measurement.cores = value.parse().ok(),
+                            "energy-gpu" => measurement.gpu = value.parse().ok(),
+                            "energy-dram" => measurement.dram = value.parse().ok(),
+                            "energy-psys" => measurement.psys = value.parse().ok(),
+                            "cpu_cycles" => measurement.cycles = value.parse().ok(),
+                            "time" => measurement.time = value.parse().ok(),
+                            "l1d_misses" => measurement.l1d_misses = value.parse().ok(),
+                            "l1i_misses" => measurement.l1i_misses = value.parse().ok(),
+                            "llc_misses" => measurement.llc_misses = value.parse().ok(),
+                            "branch_misses" => measurement.branch_misses = value.parse().ok(),
+                            "cstate_core/c1-residency" => {
+                                measurement.c1_core_residency = value.parse().ok()
+                            }
+                            "cstate_core/c3-residency" => {
+                                measurement.c3_core_residency = value.parse().ok()
+                            }
+                            "cstate_core/c6-residency" => {
+                                measurement.c6_core_residency = value.parse().ok()
+                            }
+                            "cstate_core/c7-residency" => {
+                                measurement.c7_core_residency = value.parse().ok()
+                            }
+                            "cstate_pkg/c2-residency" => {
+                                measurement.c2_pkg_residency = value.parse().ok()
+                            }
+                            "cstate_pkg/c3-residency" => {
+                                measurement.c3_pkg_residency = value.parse().ok()
+                            }
+                            "cstate_pkg/c6-residency" => {
+                                measurement.c6_pkg_residency = value.parse().ok()
+                            }
+                            "cstate_pkg/c8-residency" => {
+                                measurement.c8_pkg_residency = value.parse().ok()
+                            }
+                            "cstate_pkg/c10-residency" => {
+                                measurement.c10_pkg_residency = value.parse().ok()
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("{} Failed to read bundle: {}", context, e);
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn validate_output(output: &Output, context: &str) -> bool {
+        if !output.status.success() {
+            let exit_code = output.status.code().unwrap_or(-1);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            error!("{} Exec failed with exit code {}", context, exit_code);
+            if !stderr.trim().is_empty() {
+                error!("{} Exec stderr:\n{}", context, stderr.trim());
+            }
+            return false;
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !stderr.trim().is_empty() {
+            warn!("{} Exec stderr (warnings):\n{}", context, stderr.trim());
+        }
+        true
+    }
+
+    fn measure_internal(
+        scenario: &mut Scenario,
+        test: &Test,
+        bundles: &mut Vec<Box<dyn Bundle>>,
+        iterations: usize,
+        affinity: &Option<Vec<usize>>,
+        niceness: Option<i32>,
+        context: &str,
+    ) -> Option<Vec<Measurement>> {
+        let mut measurements = vec![];
+
+        let child = scenario
+            .exec_test_async(test)
+            .map_err(|e| error!("{} {}", context, e))
+            .ok()?;
+
+        Self::configure_process(&child, affinity, niceness)
+            .map_err(|e| error!("{} {}", context, e))
+            .ok()?;
+
+        set_iterations(iterations);
+
+        for i in 1..=iterations {
+            wait_for_ready();
+
+            if let Err(e) = Self::reset_and_enable_bundles(bundles, context) {
+                error!("{}", e);
+                return None;
+            }
+
+            signal_proceed();
+            wait_for_complete();
+
+            if let Err(e) = Self::disable_bundles(bundles, context) {
+                error!("{}", e);
+                return None;
+            }
+
+            let mut measurement = Measurement::new(scenario, test, MeasurementMode::Internal, i);
+
+            if !Self::populate_measurement(&mut measurement, bundles, context) {
+                return None;
+            }
+
+            measurements.push(measurement);
+        }
+
+        let output = child
+            .wait_with_output()
+            .map_err(|e| error!("{} {}", context, e))
+            .ok()?;
+
+        if !Self::validate_output(&output, context) {
+            return None;
+        }
+
+        Some(measurements)
+    }
+
+    fn measure_external(
+        scenario: &mut Scenario,
+        test: &Test,
+        bundles: &mut Vec<Box<dyn Bundle>>,
+        iterations: usize,
+        affinity: &Option<Vec<usize>>,
+        niceness: Option<i32>,
+        context: &str,
+    ) -> Option<Vec<Measurement>> {
+        let mut measurements = Vec::new();
+
+        for i in 1..=iterations {
+            set_iterations(1);
+
+            let child = scenario
+                .exec_test_async(test)
+                .map_err(|e| error!("{} {}", context, e))
+                .ok()?;
+
+            Self::configure_process(&child, affinity, niceness)
+                .map_err(|e| error!("{} {}", context, e))
+                .ok()?;
+
+            wait_for_ready();
+
+            if let Err(e) = Self::reset_and_enable_bundles(bundles, context) {
+                error!("{}", e);
+                return None;
+            }
+
+            signal_proceed();
+            wait_for_complete();
+
+            if let Err(e) = Self::disable_bundles(bundles, context) {
+                error!("{}", e);
+                return None;
+            }
+
+            let output = child
+                .wait_with_output()
+                .map_err(|e| error!("{} {}", context, e))
+                .ok()?;
+
+            if !Self::validate_output(&output, context) {
+                return None;
+            }
+
+            let mut measurement = Measurement::new(scenario, test, MeasurementMode::External, i);
+
+            if !Self::populate_measurement(&mut measurement, bundles, context) {
+                return None;
+            }
+
+            measurements.push(measurement);
+        }
+
+        Some(measurements)
+    }
+
+    fn measure_process(
+        scenario: &mut Scenario,
+        test: &Test,
+        bundles: &mut Vec<Box<dyn Bundle>>,
+        iterations: usize,
+        affinity: &Option<Vec<usize>>,
+        niceness: Option<i32>,
+        context: &str,
+    ) -> Option<Vec<Measurement>> {
+        let mut measurements = Vec::new();
+
+        for i in 1..=iterations {
+            let child = scenario
+                .exec_test_async(test)
+                .map_err(|e| error!("{} {}", context, e))
+                .ok()?;
+
+            Self::configure_process(&child, affinity, niceness)
+                .map_err(|e| error!("{} {}", context, e))
+                .ok()?;
+
+            if let Err(e) = Self::reset_and_enable_bundles(bundles, context) {
+                error!("{}", e);
+                return None;
+            }
+
+            let output = child
+                .wait_with_output()
+                .map_err(|e| error!("{} {}", context, e))
+                .ok()?;
+
+            if let Err(e) = Self::disable_bundles(bundles, context) {
+                error!("{}", e);
+                return None;
+            }
+
+            if !Self::validate_output(&output, context) {
+                return None;
+            }
+
+            let mut measurement = Measurement::new(scenario, test, MeasurementMode::Process, i);
+
+            if !Self::populate_measurement(&mut measurement, bundles, context) {
+                return None;
+            }
+
+            measurements.push(measurement);
+        }
+
+        Some(measurements)
+    }
+
+    fn configure_process(
+        child: &Child,
+        affinity: &Option<Vec<usize>>,
+        niceness: Option<i32>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(cpus) = affinity {
+            let pid = Pid::from_raw(child.id() as i32);
+            let mut cpu_set = CpuSet::new();
+
+            for &cpu in cpus {
+                cpu_set
+                    .set(cpu)
+                    .map_err(|e| format!("Failed to add CPU {} to affinity set: {}", cpu, e))?;
+            }
+            sched_setaffinity(pid, &cpu_set)
+                .map_err(|e| format!("Failed to set CPU affinity: {}", e))?;
+        }
+
+        if let Some(nice_value) = niceness {
+            unsafe {
+                if libc::setpriority(libc::PRIO_PROCESS, child.id(), nice_value) != 0 {
+                    return Err("Failed to set process priority".into());
+                }
             }
         }
 

@@ -9,35 +9,32 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
-pub struct MeasureArgs {
+pub struct MeasureCommand {
     /// Number of measurement iterations
     #[arg(short, long, default_value_t = 1)]
     pub iterations: u8,
-    /// Seconds to sleep between each successful measurement
+    /// Sleep seconds between each successful measurement
     #[arg(short, long, default_value_t = 0)]
     pub sleep: u8,
-    /// Paths to scenario files to measure
+    /// YAML scenario paths to measure
     #[arg(required = true, num_args = 1..)]
     pub scenarios: Vec<PathBuf>,
-    /// ALL available RAPL energy domains
+    /// Measure all available RAPL energy domains
     #[arg(long)]
     pub rapl: bool,
-    /// CPU cycle count
+    /// Measure elapsed time and CPU cycle count
     #[arg(long)]
     pub cycles: bool,
-    /// Cache miss count
+    /// Measure cache loads miss count
     #[arg(long)]
     pub cache_misses: bool,
-    /// Branch misprediction count
+    /// Measure branch misprediction count
     #[arg(long)]
     pub branch_misses: bool,
-    /// All available low power C-states
+    /// Measure all available low power C-states
     #[arg(long)]
     pub cstates: bool,
-    /// Elapsed time
-    #[arg(short, long)]
-    pub time: bool,
-    /// Output file path for CSV measurement results
+    /// CSV measurements output path
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 }
@@ -60,5 +57,14 @@ pub struct Measurement {
     pub l1i_misses: Option<u64>,
     pub llc_misses: Option<u64>,
     pub branch_misses: Option<u64>,
+    pub c1_core_residency: Option<u64>,
+    pub c3_core_residency: Option<u64>,
+    pub c6_core_residency: Option<u64>,
+    pub c7_core_residency: Option<u64>,
+    pub c2_pkg_residency: Option<u64>,
+    pub c3_pkg_residency: Option<u64>,
+    pub c6_pkg_residency: Option<u64>,
+    pub c8_pkg_residency: Option<u64>,
+    pub c10_pkg_residency: Option<u64>,
     pub ended: i64,
 }

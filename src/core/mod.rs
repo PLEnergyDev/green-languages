@@ -46,10 +46,7 @@ pub struct Scenario {
     pub compile_options: Option<Vec<String>>,
     pub runtime_options: Option<Vec<String>>,
     pub framework: Option<String>,
-    #[serde(default)]
-    pub dependencies: Vec<Dependency>,
-    #[serde(default)]
-    pub packages: Vec<Package>,
+    pub dependencies: Option<Vec<Dependency>>,
     pub affinity: Option<Vec<usize>>,
     pub niceness: Option<i32>,
     pub measurement_mode: Option<MeasurementMode>,
@@ -99,43 +96,13 @@ pub enum ScenarioResult {
     },
 }
 
-impl ScenarioResult {
-    pub fn success() -> Self {
-        Self::Success {
-            out: String::new(),
-            err: String::new(),
-        }
-    }
-
-    pub fn success_with(out: String, err: String) -> Self {
-        Self::Success { out, err }
-    }
-
-    pub fn failed(exit_code: i32) -> Self {
-        Self::Failed {
-            exit_code,
-            out: String::new(),
-            err: String::new(),
-        }
-    }
-
-    pub fn failed_with(exit_code: i32, out: String, err: String) -> Self {
-        Self::Failed {
-            exit_code,
-            out,
-            err,
-        }
-    }
-}
-
 #[derive(Default, Deserialize, Serialize)]
 pub struct Test {
     pub name: Option<String>,
     pub measurement_mode: Option<MeasurementMode>,
-    #[serde(default)]
     pub compile_options: Option<Vec<String>>,
-    #[serde(default)]
     pub runtime_options: Option<Vec<String>>,
+    pub dependencies: Option<Vec<Dependency>>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub arguments: Option<Vec<String>>,
     #[serde(

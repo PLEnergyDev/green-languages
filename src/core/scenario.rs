@@ -1,11 +1,40 @@
 use super::util::{lib_dir_str, results_dir, CommandEnvExt};
-use super::{Language, MeasurementMode, Scenario, ScenarioError, ScenarioResult, Test};
+use super::{Language, Scenario, ScenarioError, ScenarioResult, Test};
 use serde::Deserialize;
 use serde_yml::Deserializer;
 use std::fs::{self, File};
 use std::io::{BufReader, Error, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+
+impl ScenarioResult {
+    pub fn success() -> Self {
+        Self::Success {
+            out: String::new(),
+            err: String::new(),
+        }
+    }
+
+    pub fn success_with(out: String, err: String) -> Self {
+        Self::Success { out, err }
+    }
+
+    pub fn failed(exit_code: i32) -> Self {
+        Self::Failed {
+            exit_code,
+            out: String::new(),
+            err: String::new(),
+        }
+    }
+
+    pub fn failed_with(exit_code: i32, out: String, err: String) -> Self {
+        Self::Failed {
+            exit_code,
+            out,
+            err,
+        }
+    }
+}
 
 impl TryFrom<&Path> for Scenario {
     type Error = ScenarioError;
@@ -216,8 +245,8 @@ impl Scenario {
         }
 
         match self.language {
-            Language::Cs => self.prepare_cs_build()?,
-            Language::Rust => self.prepare_rust_build()?,
+            Language::Cs => self.prepare_cs_build(&test)?,
+            Language::Rust => self.prepare_rust_build(&test)?,
             _ => (),
         }
 
@@ -257,11 +286,7 @@ impl Scenario {
         }
     }
 
-    pub fn exec_test_async(
-        &self,
-        test: &Test,
-        mode: MeasurementMode,
-    ) -> Result<Child, ScenarioError> {
+    pub fn exec_test_async(&self, test: &Test) -> Result<Child, ScenarioError> {
         match self.language {
             Language::C | Language::Cpp | Language::Rust | Language::Cs => {
                 let has_runtime_opts =
@@ -312,17 +337,13 @@ impl Scenario {
             Stdio::null()
         };
 
-        let mut cmd = Command::new(&command[0]);
-        cmd.args(&command[1..])
+        let child = Command::new(&command[0])
+            .args(&command[1..])
             .stdout(Stdio::from(output_file))
             .stderr(Stdio::piped())
-            .stdin(stdin_config);
-
-        if matches!(mode, MeasurementMode::Internal | MeasurementMode::External) {
-            cmd.with_measurements_env();
-        }
-
-        let child = cmd.spawn()?;
+            .stdin(stdin_config)
+            .with_measurements_env()
+            .spawn()?;
 
         Ok(child)
     }
@@ -343,11 +364,11 @@ impl Scenario {
             return Ok(ScenarioResult::success());
         };
 
-        let stdout_path = self.stdout_path(test);
         let expected = std::fs::read(&expected_stdout_path)?;
         let expected_len = expected.len();
+        let stdout_path = self.stdout_path(test);
         let file = File::open(&stdout_path)?;
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::with_capacity(expected_len * 16, file);
         let mut buffer = vec![0u8; expected_len];
 
         for i in 0..iterations {
@@ -386,9 +407,9 @@ impl Scenario {
         }
     }
 
-    fn prepare_cs_build(&self) -> Result<(), ScenarioError> {
+    fn prepare_cs_build(&self, test: &Test) -> Result<(), ScenarioError> {
         let csproj_path = self.scenario_dir().join("Program.csproj");
-        let mut package_references = String::new();
+        let mut dep_formatted = String::new();
         let framework = self.framework.as_ref().ok_or_else(|| {
             ScenarioError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -396,55 +417,61 @@ impl Scenario {
             ))
         })?;
 
-        for package in &self.packages {
-            let version = package.version.as_deref().unwrap_or("*");
-            package_references.push_str(&format!(
-                r#"<PackageReference Include="{}" Version="{}" />\n"#,
-                package.name, version
-            ));
+        let deps = test.dependencies.as_ref().or(self.dependencies.as_ref());
+
+        if let Some(dependencies) = deps {
+            for dep in dependencies {
+                let version = dep.version.as_deref().unwrap_or("*");
+                dep_formatted.push_str(&format!(
+                    r#"<PackageReference Include="{}" Version="{}" />\n"#,
+                    dep.name, version
+                ));
+            }
         }
 
         let csproj_content = format!(
             r#"<Project Sdk="Microsoft.NET.Sdk">
-                   <PropertyGroup>
-                       <TargetFramework>{}</TargetFramework>
-                   </PropertyGroup>
-                   <ItemGroup>{}</ItemGroup>
-               </Project>"#,
-            framework, package_references
+               <PropertyGroup>
+                   <TargetFramework>{}</TargetFramework>
+               </PropertyGroup>
+               <ItemGroup>{}</ItemGroup>
+           </Project>"#,
+            framework, dep_formatted
         );
 
         fs::write(&csproj_path, csproj_content)?;
-
         Ok(())
     }
 
-    fn prepare_rust_build(&self) -> Result<(), ScenarioError> {
+    fn prepare_rust_build(&self, test: &Test) -> Result<(), ScenarioError> {
         let toml_path = self.scenario_dir().join("Cargo.toml");
-        let mut dependency_references = String::new();
+        let mut dep_formatted = String::new();
 
-        for package in &self.packages {
-            let version = package.version.as_deref().unwrap_or("*");
-            dependency_references.push_str(&format!(r#"{} = "{}"\n"#, package.name, version));
+        let deps = test.dependencies.as_ref().or(self.dependencies.as_ref());
+
+        if let Some(dependencies) = deps {
+            for dep in dependencies {
+                let version = dep.version.as_deref().unwrap_or("*");
+                dep_formatted.push_str(&format!(r#"{} = "{}"\n"#, dep.name, version));
+            }
         }
 
         let toml_content = format!(
             r#"[package]
-            name = "program"
-            version = "0.1.0"
-            edition = "2024"
+        name = "program"
+        version = "0.1.0"
+        edition = "2024"
 
-            [[bin]]
-            name = "program"
-            path = "main.rs"
+        [[bin]]
+        name = "program"
+        path = "main.rs"
 
-            [dependencies]
-            {}"#,
-            dependency_references
+        [dependencies]
+        {}"#,
+            dep_formatted
         );
 
         fs::write(&toml_path, toml_content)?;
-
         Ok(())
     }
 }
