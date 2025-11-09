@@ -1,4 +1,3 @@
-pub mod share;
 pub mod signal;
 
 #[no_mangle]
@@ -11,7 +10,6 @@ pub extern "C" fn end_measurement() {
     signal::end_measurement()
 }
 
-// JNI interface for Java
 #[cfg(target_os = "linux")]
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 pub mod jni {

@@ -3,8 +3,7 @@ use crate::core::{MeasurementMode, Scenario, ScenarioResult, Test};
 use crate::{MeasureCommand, Measurement};
 use csv::WriterBuilder;
 use log::{error, info, warn};
-use measurements::share::cleanup_shared_memory;
-use measurements::signal::*;
+use measurements::signal;
 use nix::sched::{sched_setaffinity, CpuSet};
 use nix::unistd::Pid;
 use perf_event::events::{Cache, CacheId, CacheOp, CacheResult, Dynamic, Hardware, Software};
@@ -17,6 +16,9 @@ use std::process::{Child, Output};
 use std::time::Instant;
 
 trait Bundle {
+    fn new() -> Result<Self, Box<dyn std::error::Error>>
+    where
+        Self: Sized;
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>>;
     fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>>;
     fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>>;
@@ -47,14 +49,14 @@ struct CyclesBundle {
     start_time: Option<Instant>,
 }
 
-impl RaplBundle {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+impl Bundle for RaplBundle {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let rapl_events = vec![
             "energy-pkg",
             "energy-cores",
             "energy-gpu",
             "energy-psys",
-            "energy-dram",
+            "energy-ram",
         ];
         let mut group = Builder::new(Software::DUMMY)
             .read_format(ReadFormat::GROUP | ReadFormat::TOTAL_TIME_RUNNING)
@@ -87,9 +89,7 @@ impl RaplBundle {
 
         Ok(Self { group, counters })
     }
-}
 
-impl Bundle for RaplBundle {
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.group.enable()?;
         Ok(())
@@ -116,52 +116,43 @@ impl Bundle for RaplBundle {
     }
 }
 
-impl MissesBundle {
-    pub fn new(
-        cache_misses: bool,
-        branch_misses: bool,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+impl Bundle for MissesBundle {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let mut group = Group::new()?;
         let mut counters = HashMap::new();
 
-        if cache_misses {
-            const L1D_MISS: Cache = Cache {
-                which: CacheId::L1D,
-                operation: CacheOp::READ,
-                result: CacheResult::MISS,
-            };
-            const L1I_MISS: Cache = Cache {
-                which: CacheId::L1I,
-                operation: CacheOp::READ,
-                result: CacheResult::MISS,
-            };
-            const LLC_MISS: Cache = Cache {
-                which: CacheId::LL,
-                operation: CacheOp::READ,
-                result: CacheResult::MISS,
-            };
+        const L1D_MISS: Cache = Cache {
+            which: CacheId::L1D,
+            operation: CacheOp::READ,
+            result: CacheResult::MISS,
+        };
+        const L1I_MISS: Cache = Cache {
+            which: CacheId::L1I,
+            operation: CacheOp::READ,
+            result: CacheResult::MISS,
+        };
+        const LLC_MISS: Cache = Cache {
+            which: CacheId::LL,
+            operation: CacheOp::READ,
+            result: CacheResult::MISS,
+        };
 
-            if let Ok(l1d_counter) = group.add(&Builder::new(L1D_MISS)) {
-                counters.insert("l1d_misses", l1d_counter);
-            }
-            if let Ok(l1i_counter) = group.add(&Builder::new(L1I_MISS)) {
-                counters.insert("l1i_misses", l1i_counter);
-            }
-            if let Ok(llc_counter) = group.add(&Builder::new(LLC_MISS)) {
-                counters.insert("llc_misses", llc_counter);
-            }
+        if let Ok(l1d_counter) = group.add(&Builder::new(L1D_MISS)) {
+            counters.insert("l1d_misses", l1d_counter);
         }
-        if branch_misses {
-            if let Ok(branch_counter) = group.add(&Builder::new(Hardware::BRANCH_MISSES)) {
-                counters.insert("branch_misses", branch_counter);
-            }
+        if let Ok(l1i_counter) = group.add(&Builder::new(L1I_MISS)) {
+            counters.insert("l1i_misses", l1i_counter);
+        }
+        if let Ok(llc_counter) = group.add(&Builder::new(LLC_MISS)) {
+            counters.insert("llc_misses", llc_counter);
+        }
+        if let Ok(branch_counter) = group.add(&Builder::new(Hardware::BRANCH_MISSES)) {
+            counters.insert("branch_misses", branch_counter);
         }
 
         Ok(Self { group, counters })
     }
-}
 
-impl Bundle for MissesBundle {
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.group.enable()?;
         Ok(())
@@ -187,8 +178,8 @@ impl Bundle for MissesBundle {
     }
 }
 
-impl CStateBundle {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+impl Bundle for CStateBundle {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let core_events = vec![
             "c1-residency",
             "c3-residency",
@@ -203,7 +194,7 @@ impl CStateBundle {
             "c10-residency",
         ];
         let mut counters = HashMap::new();
-        let num_cpus = num_cpus::get();
+        let num_cpus = num_cpus::get_physical();
 
         for event_name in core_events {
             for cpu in 0..num_cpus {
@@ -247,9 +238,7 @@ impl CStateBundle {
 
         Ok(Self { counters })
     }
-}
 
-impl Bundle for CStateBundle {
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for counter in self.counters.values_mut() {
             counter.enable()?;
@@ -300,8 +289,8 @@ impl Bundle for CStateBundle {
     }
 }
 
-impl CyclesBundle {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+impl Bundle for CyclesBundle {
+    fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let counter = Builder::new(Hardware::CPU_CYCLES)
             .exclude_kernel(false)
             .exclude_hv(false)
@@ -312,9 +301,7 @@ impl CyclesBundle {
             start_time: None,
         })
     }
-}
 
-impl Bundle for CyclesBundle {
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.start_time = Some(Instant::now());
         self.counter.enable()?;
@@ -336,7 +323,7 @@ impl Bundle for CyclesBundle {
         let mut results = HashMap::new();
 
         let cycles = self.counter.read()?;
-        results.insert("cpu_cycles".to_string(), cycles.to_string());
+        results.insert("cycles".to_string(), cycles.to_string());
 
         if let Some(start) = self.start_time {
             let elapsed_micros = start.elapsed().as_micros() as u64;
@@ -376,7 +363,7 @@ impl Measurement {
             pkg: None,
             cores: None,
             gpu: None,
-            dram: None,
+            ram: None,
             psys: None,
             cycles: None,
             l1d_misses: None,
@@ -405,11 +392,8 @@ impl MeasureCommand {
         if args.rapl {
             bundles.push(Box::new(RaplBundle::new()?));
         }
-        if args.cache_misses || args.branch_misses {
-            bundles.push(Box::new(MissesBundle::new(
-                args.cache_misses,
-                args.branch_misses,
-            )?));
+        if args.misses {
+            bundles.push(Box::new(MissesBundle::new()?));
         }
         if args.cstates {
             bundles.push(Box::new(CStateBundle::new()?));
@@ -419,13 +403,11 @@ impl MeasureCommand {
         }
 
         fn write_measurements(
-            measurements: Option<Vec<Measurement>>,
+            measurements: Vec<Measurement>,
             output_path: &PathBuf,
         ) -> Result<(), Box<dyn std::error::Error>> {
-            if let Some(measurements) = measurements {
-                for measurement in measurements {
-                    measurement.write_to_csv(output_path)?;
-                }
+            for measurement in measurements {
+                measurement.write_to_csv(output_path)?;
             }
             Ok(())
         }
@@ -441,8 +423,6 @@ impl MeasureCommand {
             if scenario_dir.exists() {
                 fs::remove_dir_all(&scenario_dir)?;
             }
-
-            init_shared_state()?;
 
             let output_path = if let Some(ref user_path) = args.output {
                 if let Some(parent) = user_path.parent() {
@@ -461,13 +441,13 @@ impl MeasureCommand {
                     test.name = Some((index + 1).to_string());
                 }
 
-                let measurements =
-                    Self::process_test(&mut scenario, test, &mut bundles, 0, iterations);
-
-                if measurements.is_some() {
+                if let Ok(measurements) =
+                    Self::process_test(&mut scenario, test, &mut bundles, 0, iterations)
+                {
                     write_measurements(measurements, &output_path)?;
 
                     if args.sleep > 0 {
+                        info!("Sleeping for {}", args.sleep);
                         std::thread::sleep(std::time::Duration::from_secs(args.sleep as u64));
                     }
                 }
@@ -476,19 +456,18 @@ impl MeasureCommand {
             if !has_tests {
                 let mut test = Test::default();
                 test.name = Some("1".to_string());
-                let measurements =
-                    Self::process_test(&mut scenario, test, &mut bundles, 0, iterations);
 
-                if measurements.is_some() {
+                if let Ok(measurements) =
+                    Self::process_test(&mut scenario, test, &mut bundles, 0, iterations)
+                {
                     write_measurements(measurements, &output_path)?;
 
                     if args.sleep > 0 {
+                        info!("Sleeping for {}", args.sleep);
                         std::thread::sleep(std::time::Duration::from_secs(args.sleep as u64));
                     }
                 }
             }
-
-            cleanup_shared_memory();
         }
 
         Ok(())
@@ -500,13 +479,16 @@ impl MeasureCommand {
         bundles: &mut Vec<Box<dyn Bundle>>,
         iter_index: usize,
         iterations: usize,
-    ) -> Option<Vec<Measurement>> {
+    ) -> Result<Vec<Measurement>, Box<dyn std::error::Error>> {
         let test_name = test.name.as_ref().unwrap();
-        let context = format!("[{}/{}/{}]", scenario.language, scenario.name, test_name);
         let measurement_mode = test
             .measurement_mode
             .or(scenario.measurement_mode)
             .unwrap_or(MeasurementMode::Process);
+        let context = format!(
+            "[{}/{}/{}/{}]",
+            scenario.language, scenario.name, test_name, measurement_mode
+        );
         let affinity = test.affinity.clone().or(scenario.affinity.clone());
         let niceness = test.niceness.or(scenario.niceness);
 
@@ -533,11 +515,11 @@ impl MeasureCommand {
                 if !out.trim().is_empty() {
                     error!("{} Build stdout:\n{}", context, out.trim());
                 }
-                return None;
+                return Err(format!("Build failed with exit code {}", exit_code).into());
             }
             Err(err) => {
                 error!("{} Build error: {}", context, err);
-                return None;
+                return Err(format!("Build error: {}", err).into());
             }
         }
 
@@ -545,18 +527,14 @@ impl MeasureCommand {
         let measurements = match measurement_mode {
             MeasurementMode::Internal => Self::measure_internal(
                 scenario, &test, bundles, iterations, &affinity, niceness, &context,
-            ),
+            )?,
             MeasurementMode::External => Self::measure_external(
                 scenario, &test, bundles, iterations, &affinity, niceness, &context,
-            ),
+            )?,
             MeasurementMode::Process => Self::measure_process(
                 scenario, &test, bundles, iterations, &affinity, niceness, &context,
-            ),
+            )?,
         };
-
-        if measurements.is_none() {
-            return None;
-        }
 
         let test_expected_stdout_path = scenario.test_expected_stdout_path(&test);
         let scenario_expected_stdout_path = scenario.scenario_expected_stdout_path();
@@ -591,22 +569,22 @@ impl MeasureCommand {
                     if !out.trim().is_empty() {
                         error!("{} Test failure details:\n{}", context, out.trim());
                     }
-                    return None;
+                    return Err(format!("Test failed with exit code {}", exit_code).into());
                 }
                 Err(err) => {
                     error!("{} Test error: {}", context, err);
-                    return None;
+                    return Err(format!("Test error: {}", err).into());
                 }
             }
         }
 
-        measurements
+        Ok(measurements)
     }
 
     fn reset_and_enable_bundles(
         bundles: &mut Vec<Box<dyn Bundle>>,
         context: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         for bundle in bundles.iter_mut() {
             bundle
                 .reset()
@@ -618,7 +596,10 @@ impl MeasureCommand {
         Ok(())
     }
 
-    fn disable_bundles(bundles: &mut Vec<Box<dyn Bundle>>, context: &str) -> Result<(), String> {
+    fn disable_bundles(
+        bundles: &mut Vec<Box<dyn Bundle>>,
+        context: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         for bundle in bundles.iter_mut() {
             bundle
                 .disable()
@@ -631,64 +612,52 @@ impl MeasureCommand {
         measurement: &mut Measurement,
         bundles: &mut Vec<Box<dyn Bundle>>,
         context: &str,
-    ) -> bool {
+    ) -> Result<(), Box<dyn std::error::Error>> {
         for bundle in bundles.iter_mut() {
-            match bundle.read() {
-                Ok(data) => {
-                    for (key, value) in data {
-                        match key.as_str() {
-                            "energy-pkg" => measurement.pkg = value.parse().ok(),
-                            "energy-cores" => measurement.cores = value.parse().ok(),
-                            "energy-gpu" => measurement.gpu = value.parse().ok(),
-                            "energy-dram" => measurement.dram = value.parse().ok(),
-                            "energy-psys" => measurement.psys = value.parse().ok(),
-                            "cpu_cycles" => measurement.cycles = value.parse().ok(),
-                            "time" => measurement.time = value.parse().ok(),
-                            "l1d_misses" => measurement.l1d_misses = value.parse().ok(),
-                            "l1i_misses" => measurement.l1i_misses = value.parse().ok(),
-                            "llc_misses" => measurement.llc_misses = value.parse().ok(),
-                            "branch_misses" => measurement.branch_misses = value.parse().ok(),
-                            "cstate_core/c1-residency" => {
-                                measurement.c1_core_residency = value.parse().ok()
-                            }
-                            "cstate_core/c3-residency" => {
-                                measurement.c3_core_residency = value.parse().ok()
-                            }
-                            "cstate_core/c6-residency" => {
-                                measurement.c6_core_residency = value.parse().ok()
-                            }
-                            "cstate_core/c7-residency" => {
-                                measurement.c7_core_residency = value.parse().ok()
-                            }
-                            "cstate_pkg/c2-residency" => {
-                                measurement.c2_pkg_residency = value.parse().ok()
-                            }
-                            "cstate_pkg/c3-residency" => {
-                                measurement.c3_pkg_residency = value.parse().ok()
-                            }
-                            "cstate_pkg/c6-residency" => {
-                                measurement.c6_pkg_residency = value.parse().ok()
-                            }
-                            "cstate_pkg/c8-residency" => {
-                                measurement.c8_pkg_residency = value.parse().ok()
-                            }
-                            "cstate_pkg/c10-residency" => {
-                                measurement.c10_pkg_residency = value.parse().ok()
-                            }
-                            _ => {}
-                        }
+            let data = bundle
+                .read()
+                .map_err(|e| format!("{} Failed to read bundle: {}", context, e))?;
+
+            for (key, value) in data {
+                match key.as_str() {
+                    "energy-pkg" => measurement.pkg = value.parse().ok(),
+                    "energy-cores" => measurement.cores = value.parse().ok(),
+                    "energy-gpu" => measurement.gpu = value.parse().ok(),
+                    "energy-ram" => measurement.ram = value.parse().ok(),
+                    "energy-psys" => measurement.psys = value.parse().ok(),
+                    "cycles" => measurement.cycles = value.parse().ok(),
+                    "time" => measurement.time = value.parse().ok(),
+                    "l1d_misses" => measurement.l1d_misses = value.parse().ok(),
+                    "l1i_misses" => measurement.l1i_misses = value.parse().ok(),
+                    "llc_misses" => measurement.llc_misses = value.parse().ok(),
+                    "branch_misses" => measurement.branch_misses = value.parse().ok(),
+                    "cstate_core/c1-residency" => {
+                        measurement.c1_core_residency = value.parse().ok()
                     }
-                }
-                Err(e) => {
-                    error!("{} Failed to read bundle: {}", context, e);
-                    return false;
+                    "cstate_core/c3-residency" => {
+                        measurement.c3_core_residency = value.parse().ok()
+                    }
+                    "cstate_core/c6-residency" => {
+                        measurement.c6_core_residency = value.parse().ok()
+                    }
+                    "cstate_core/c7-residency" => {
+                        measurement.c7_core_residency = value.parse().ok()
+                    }
+                    "cstate_pkg/c2-residency" => measurement.c2_pkg_residency = value.parse().ok(),
+                    "cstate_pkg/c3-residency" => measurement.c3_pkg_residency = value.parse().ok(),
+                    "cstate_pkg/c6-residency" => measurement.c6_pkg_residency = value.parse().ok(),
+                    "cstate_pkg/c8-residency" => measurement.c8_pkg_residency = value.parse().ok(),
+                    "cstate_pkg/c10-residency" => {
+                        measurement.c10_pkg_residency = value.parse().ok()
+                    }
+                    _ => {}
                 }
             }
         }
-        true
+        Ok(())
     }
 
-    fn validate_output(output: &Output, context: &str) -> bool {
+    fn validate_output(output: &Output, context: &str) -> Result<(), Box<dyn std::error::Error>> {
         if !output.status.success() {
             let exit_code = output.status.code().unwrap_or(-1);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -696,13 +665,13 @@ impl MeasureCommand {
             if !stderr.trim().is_empty() {
                 error!("{} Exec stderr:\n{}", context, stderr.trim());
             }
-            return false;
+            return Err(format!("Exec failed with exit code {}", exit_code).into());
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         if !stderr.trim().is_empty() {
             warn!("{} Exec stderr (warnings):\n{}", context, stderr.trim());
         }
-        true
+        Ok(())
     }
 
     fn measure_internal(
@@ -713,55 +682,38 @@ impl MeasureCommand {
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
         context: &str,
-    ) -> Option<Vec<Measurement>> {
+    ) -> Result<Vec<Measurement>, Box<dyn std::error::Error>> {
         let mut measurements = vec![];
 
-        let child = scenario
-            .exec_test_async(test)
-            .map_err(|e| error!("{} {}", context, e))
-            .ok()?;
+        signal::set_iterations(iterations)?;
 
-        Self::configure_process(&child, affinity, niceness)
-            .map_err(|e| error!("{} {}", context, e))
-            .ok()?;
+        let child = scenario.exec_test_async(test)?;
 
-        set_iterations(iterations);
+        Self::configure_process(&child, affinity, niceness)?;
 
         for i in 1..=iterations {
-            wait_for_ready();
+            signal::wait_for_start();
 
-            if let Err(e) = Self::reset_and_enable_bundles(bundles, context) {
-                error!("{}", e);
-                return None;
-            }
+            Self::reset_and_enable_bundles(bundles, context)?;
 
-            signal_proceed();
-            wait_for_complete();
+            signal::wait_for_end();
 
-            if let Err(e) = Self::disable_bundles(bundles, context) {
-                error!("{}", e);
-                return None;
-            }
+            Self::disable_bundles(bundles, context)?;
 
             let mut measurement = Measurement::new(scenario, test, MeasurementMode::Internal, i);
 
-            if !Self::populate_measurement(&mut measurement, bundles, context) {
-                return None;
-            }
+            Self::populate_measurement(&mut measurement, bundles, context)?;
 
             measurements.push(measurement);
         }
 
-        let output = child
-            .wait_with_output()
-            .map_err(|e| error!("{} {}", context, e))
-            .ok()?;
+        signal::cleanup_pipes();
 
-        if !Self::validate_output(&output, context) {
-            return None;
-        }
+        let output = child.wait_with_output()?;
 
-        Some(measurements)
+        Self::validate_output(&output, context)?;
+
+        Ok(measurements)
     }
 
     fn measure_external(
@@ -772,55 +724,38 @@ impl MeasureCommand {
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
         context: &str,
-    ) -> Option<Vec<Measurement>> {
+    ) -> Result<Vec<Measurement>, Box<dyn std::error::Error>> {
         let mut measurements = Vec::new();
 
         for i in 1..=iterations {
-            set_iterations(1);
+            signal::set_iterations(1)?;
 
-            let child = scenario
-                .exec_test_async(test)
-                .map_err(|e| error!("{} {}", context, e))
-                .ok()?;
+            let child = scenario.exec_test_async(test)?;
 
-            Self::configure_process(&child, affinity, niceness)
-                .map_err(|e| error!("{} {}", context, e))
-                .ok()?;
+            Self::configure_process(&child, affinity, niceness)?;
 
-            wait_for_ready();
+            signal::wait_for_start();
 
-            if let Err(e) = Self::reset_and_enable_bundles(bundles, context) {
-                error!("{}", e);
-                return None;
-            }
+            Self::reset_and_enable_bundles(bundles, context)?;
 
-            signal_proceed();
-            wait_for_complete();
+            signal::wait_for_end();
 
-            if let Err(e) = Self::disable_bundles(bundles, context) {
-                error!("{}", e);
-                return None;
-            }
+            Self::disable_bundles(bundles, context)?;
 
-            let output = child
-                .wait_with_output()
-                .map_err(|e| error!("{} {}", context, e))
-                .ok()?;
+            signal::cleanup_pipes();
 
-            if !Self::validate_output(&output, context) {
-                return None;
-            }
+            let output = child.wait_with_output()?;
+
+            Self::validate_output(&output, context)?;
 
             let mut measurement = Measurement::new(scenario, test, MeasurementMode::External, i);
 
-            if !Self::populate_measurement(&mut measurement, bundles, context) {
-                return None;
-            }
+            Self::populate_measurement(&mut measurement, bundles, context)?;
 
             measurements.push(measurement);
         }
 
-        Some(measurements)
+        Ok(measurements)
     }
 
     fn measure_process(
@@ -831,48 +766,30 @@ impl MeasureCommand {
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
         context: &str,
-    ) -> Option<Vec<Measurement>> {
+    ) -> Result<Vec<Measurement>, Box<dyn std::error::Error>> {
         let mut measurements = Vec::new();
 
         for i in 1..=iterations {
-            let child = scenario
-                .exec_test_async(test)
-                .map_err(|e| error!("{} {}", context, e))
-                .ok()?;
+            let child = scenario.exec_test_async(test)?;
 
-            Self::configure_process(&child, affinity, niceness)
-                .map_err(|e| error!("{} {}", context, e))
-                .ok()?;
+            Self::configure_process(&child, affinity, niceness)?;
 
-            if let Err(e) = Self::reset_and_enable_bundles(bundles, context) {
-                error!("{}", e);
-                return None;
-            }
+            Self::reset_and_enable_bundles(bundles, context)?;
 
-            let output = child
-                .wait_with_output()
-                .map_err(|e| error!("{} {}", context, e))
-                .ok()?;
+            let output = child.wait_with_output()?;
 
-            if let Err(e) = Self::disable_bundles(bundles, context) {
-                error!("{}", e);
-                return None;
-            }
+            Self::disable_bundles(bundles, context)?;
 
-            if !Self::validate_output(&output, context) {
-                return None;
-            }
+            Self::validate_output(&output, context)?;
 
             let mut measurement = Measurement::new(scenario, test, MeasurementMode::Process, i);
 
-            if !Self::populate_measurement(&mut measurement, bundles, context) {
-                return None;
-            }
+            Self::populate_measurement(&mut measurement, bundles, context)?;
 
             measurements.push(measurement);
         }
 
-        Some(measurements)
+        Ok(measurements)
     }
 
     fn configure_process(

@@ -29,7 +29,7 @@ pub struct Dependency {
     pub version: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Display, Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MeasurementMode {
     Internal,

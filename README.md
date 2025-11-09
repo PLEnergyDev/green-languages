@@ -27,7 +27,7 @@ fibonacci,c,1,process,5,53974,0.83,0.606,0.0,,1.456,12048084,277,1372,0,343,2665
 | Flag              | Metric                       | Unit              |
 | ----------------- | ---------------------------- | ----------------- |
 | `--rapl`          | All RAPL energy domains      | Joules            |
-| `--cycles`        | CPU cycles & wall-clock time | Count/Nanoseconds |
+| `--cycles`        | CPU cycles & wall-clock time | Count/Miroseconds |
 | `--cache-misses`  | L1d, L1i, LLC loads misses   | Count             |
 | `--branch-misses` | Branch misses                | Count             |
 | `--cstates`       | All CPU low power C-states   | Count             |

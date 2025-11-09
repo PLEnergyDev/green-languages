@@ -25,13 +25,10 @@ pub struct MeasureCommand {
     /// Measure elapsed time and CPU cycle count
     #[arg(long)]
     pub cycles: bool,
-    /// Measure cache loads miss count
+    /// Measure cache loads miss and branch misprediction count
     #[arg(long)]
-    pub cache_misses: bool,
-    /// Measure branch misprediction count
-    #[arg(long)]
-    pub branch_misses: bool,
-    /// Measure all available low power C-states
+    pub misses: bool,
+    /// Measure and sum all available low power C-states
     #[arg(long)]
     pub cstates: bool,
     /// CSV measurements output path
@@ -50,7 +47,7 @@ pub struct Measurement {
     pub pkg: Option<f64>,
     pub cores: Option<f64>,
     pub gpu: Option<f64>,
-    pub dram: Option<f64>,
+    pub ram: Option<f64>,
     pub psys: Option<f64>,
     pub cycles: Option<u64>,
     pub l1d_misses: Option<u64>,

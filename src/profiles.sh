@@ -14,15 +14,31 @@ check_tlp() {
 
 show_usage() {
     cat << EOF
-Usage: glp [COMMAND]
+Usage: glp [COMMAND] [SUBCOMMAND] [OPTIONS]
 
-Commands:
-  list              List all available profiles
-  enable PROFILE    Enable a profile (restarts TLP)
-  help              Show this help message
+Profile Management:
+  profile list         List all available TLP profiles
+  profile PROFILE      Enable a TLP profile (restarts TLP)
+
+CPU Management:
+  cpu disable PCT      Disable PCT% of CPUs (e.g., 50 for 50%)
+  cpu enable           Re-enable all CPUs
+  cpu disable-ht       Disable hyperthreading
+  cpu enable-ht        Re-enable hyperthreading
+  cpu disable-cstates  Disable all C-states
+  cpu enable-cstates   Re-enable all C-states
+
+General:
+  help                 Show this help message
+
+Examples:
+  glp profile list
+  glp profile powersave
+  glp cpu disable 50
+  glp cpu disable-ht
+  glp cpu disable-cstates
 
 Profiles are stored in: ${PROFILES_DIR}/
-Each profile should be a .conf file containing TLP settings.
 
 EOF
 }
@@ -63,29 +79,172 @@ enable_profile() {
 
     echo "Enabling profile: $profile"
 
-    # Remove any previously enabled profile
     sudo rm -f /etc/tlp.d/*.conf
 
-    # Copy profile to tlp.d with .conf extension
     sudo cp "$profile_file" "/etc/tlp.d/$profile.conf"
     sudo tlp start
 
     echo "Profile '$profile' enabled and TLP restarted"
 }
 
+disable_cpus() {
+    local percentage=$1
+
+    if [ -z "$percentage" ]; then
+        echo "Error: Percentage required (e.g., 50 for 50%)"
+        return 1
+    fi
+
+    if ! [[ "$percentage" =~ ^[0-9]+$ ]] || [ "$percentage" -lt 0 ] || [ "$percentage" -gt 100 ]; then
+        echo "Error: Percentage must be between 0 and 100"
+        return 1
+    fi
+
+    local available_cpus=()
+    for cpu_path in /sys/devices/system/cpu/cpu[1-9]*/online; do
+        if [ -f "$cpu_path" ]; then
+            local online_status=$(cat "$cpu_path" 2>/dev/null)
+            if [ "$online_status" = "1" ]; then
+                local cpu_num=$(echo "$cpu_path" | grep -oP 'cpu\K[0-9]+')
+                available_cpus+=("$cpu_num")
+            fi
+        fi
+    done
+
+    local total_available=${#available_cpus[@]}
+
+    if [ $total_available -eq 0 ]; then
+        echo "No CPUs available to disable (CPU 0 is always kept online)"
+        return 1
+    fi
+
+    local num_to_disable=$(( (total_available * percentage + 99) / 100 ))
+
+    if [ $num_to_disable -eq 0 ]; then
+        echo "No CPUs to disable at ${percentage}%"
+        return 0
+    fi
+
+    if [ $num_to_disable -gt $total_available ]; then
+        num_to_disable=$total_available
+    fi
+
+    echo "Disabling $num_to_disable out of $total_available available CPUs (${percentage}%)..."
+
+    local count=0
+    for ((i=0; i<num_to_disable; i++)); do
+        local cpu_num=${available_cpus[$i]}
+        echo 0 | sudo tee "/sys/devices/system/cpu/cpu${cpu_num}/online" > /dev/null 2>&1 && ((count++)) || true
+    done
+
+    echo "Disabled $count CPUs (CPU 0 is restricted)"
+}
+
+
+enable_cpus() {
+    echo "Re-enabling all CPUs..."
+
+    for cpu_path in /sys/devices/system/cpu/cpu*/online; do
+        echo 1 | sudo tee "$cpu_path" > /dev/null 2>&1 || true
+    done
+
+    echo "All CPUs re-enabled"
+}
+
+
+disable_cstates() {
+    echo "Disabling all C-states on all CPUs..."
+
+    local count=0
+    for state_disable in /sys/devices/system/cpu/cpu*/cpuidle/state*/disable; do
+        if [ -f "$state_disable" ]; then
+            echo 1 | sudo tee "$state_disable" > /dev/null 2>&1 && ((count++)) || true
+        fi
+    done
+
+    echo "Disabled $count C-state entries across all CPUs"
+}
+
+enable_cstates() {
+    echo "Re-enabling all C-states on all CPUs..."
+
+    local count=0
+    for state_disable in /sys/devices/system/cpu/cpu*/cpuidle/state*/disable; do
+        if [ -f "$state_disable" ]; then
+            echo 0 | sudo tee "$state_disable" > /dev/null 2>&1 && ((count++)) || true
+        fi
+    done
+
+    echo "Enabled $count C-state entries across all CPUs"
+}
+
+disable_ht() {
+    if [ ! -f "/sys/devices/system/cpu/smt/control" ]; then
+        echo "Error: SMT control interface not available on this kernel"
+        return 1
+    fi
+
+    echo "Disabling hyperthreading (SMT)..."
+    echo off | sudo tee /sys/devices/system/cpu/smt/control > /dev/null
+    echo "Hyperthreading disabled"
+}
+
+enable_ht() {
+    if [ ! -f "/sys/devices/system/cpu/smt/control" ]; then
+        echo "Error: SMT control interface not available on this kernel"
+        return 1
+    fi
+
+    echo "Enabling hyperthreading (SMT)..."
+    echo on | sudo tee /sys/devices/system/cpu/smt/control > /dev/null
+    echo "Hyperthreading enabled"
+}
+
 main() {
     local command=$1
+    local subcommand=$2
 
     case "$command" in
-        list)
+        profile)
             check_tlp || return 1
-            list_profiles
+            if [ "$subcommand" = "list" ]; then
+                list_profiles
+            elif [ -z "$subcommand" ]; then
+                echo "Error: Profile name required"
+                echo "Use 'glp profile list' or 'glp profile PROFILE_NAME'"
+                exit 1
+            else
+                enable_profile "$subcommand"
+            fi
             ;;
-        enable)
-            check_tlp || return 1
-            enable_profile "$2"
+        cpu)
+            case "$subcommand" in
+                disable)
+                    disable_cpus "$3"
+                    ;;
+                enable)
+                    enable_cpus
+                    ;;
+                disable-ht)
+                    disable_ht
+                    ;;
+                enable-ht)
+                    enable_ht
+                    ;;
+                disable-cstates)
+                    disable_cstates
+                    ;;
+                enable-cstates)
+                    enable_cstates
+                    ;;
+                *)
+                    echo "Unknown cpu subcommand: $subcommand"
+                    echo "Available: disable, enable, disable-ht, enable-ht, disable-cstates, enable-cstates"
+                    exit 1
+                    ;;
+            esac
             ;;
-        help|--help|-h)
+        help|--help|-h|"")
             show_usage
             ;;
         *)
