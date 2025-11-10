@@ -7,7 +7,7 @@
 Provide a scenario and enable a performance metric to the `gl` CLI tool:
 
 ```sh
-gl fib.yml --rapl --cycles --branch-misses --cache-misses --cstates -i5
+gl fib.yml --rapl --cycles --misses --cstates -i5
 ```
 
 Upon success, the `results` dir is created containing `results.csv`, `gl.log` and build artifacts. Contents of `results.csv`:
@@ -24,13 +24,13 @@ fibonacci,c,1,process,5,53974,0.83,0.606,0.0,,1.456,12048084,277,1372,0,343,2665
 
 ## Available Performance Metrics
 
-| Flag              | Metric                       | Unit              |
-| ----------------- | ---------------------------- | ----------------- |
-| `--rapl`          | All RAPL energy domains      | Joules            |
-| `--cycles`        | CPU cycles & wall-clock time | Count/Miroseconds |
-| `--cache-misses`  | L1d, L1i, LLC loads misses   | Count             |
-| `--branch-misses` | Branch misses                | Count             |
-| `--cstates`       | All CPU low power C-states   | Count             |
+| Flag        | Metric                                     | Unit   | Scope       |
+| ----------- | ------------------------------------------ | ------ | ----------- |
+|             | Wall-Clock Time (Always Enabled)           | Micros | System-Wide |
+| `--rapl`    | RAPL Energy Domains                        | Joules | System-Wide |
+| `--cycles`  | CPU Cycles                                 | Count  | Process     |
+| `--misses`  | L1D, L1I, LLC Loads Misses & Branch Misses | Count  | Process     |
+| `--cstates` | CPU Low Power C-States (CPU Idling)        | Count  | System-Wide |
 
 ## Scenarios
 
@@ -229,20 +229,19 @@ expected_stdout: !!binary |
 
 ## All Scenario Fields
 
-| Field             |  Type     |  Required  |  Description                                                                                                                                             
-| ----------------- | --------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| name              | String    | Yes        | Scenario identifier used in output and logs                                                                                                               |
-| language          | String    | Yes        | Programming language: `c`, `cpp`, `cs`, `java`, `rust`, `python`,                                                                                         |
-| code              | String    | Yes        | Source code to compile and execute                                                                                                                        |
-| description       | String    | No         | Human-readable scenario description                                                                                                                       |
-| measurement_mode  | String    | No         | Measurement strategy: `process` (default, entire program), `external` (single iteration within process), `internal` (multiple iterations within process)  |
-| compile_options   | List      | No         | Compiler flags for compiled languages. Test-level overrides scenario-level                                                                                |
-| runtime_options   | List      | No         | Runtime interpreter flags for non-compiled languages. Test-level overrides scenario-level                                                                 |
-| arguments         | List      | No         | Program arguments. Test-level overrides scenario-level. Supports strings, numbers, booleans                                                               |
-| framework         | String    | No         | Required for C#: target framework (e.g.,net8.0)                                                                                                           |
-| packages          | List      | No         | External package dependencies with name and optional version                                                                                              |
-| dependencies      | List      | No         | System dependencies with name and optional version                                                                                                        |
-| affinity          | List      | No         | CPU core pinning (e.g.,[0, 1] restricts to cores 0-1). Test-level overrides scenario-level                                                                |
-| niceness          | Integer   | No         | Process priority (-20 highest, 19 lowest). Test-level overrides scenario-level                                                                            |
-| stdin             | Binary    | No         | Base64-encoded input piped to program. Test-level overrides scenario-level                                                                                |
-| expected_stdout   | Binary    | No         | Base64-encoded expected output for verification. Test-level overrides scenario-level                                                                      |
+| Field            | Type    | Required | Description                                                                                                                                             
+| ---------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| name             | String  | Yes      | Scenario identifier used in output and logs                                                                                                              |
+| language         | String  | Yes      | Programming language: `c`, `cpp`, `cs`, `java`, `rust`, `python`,                                                                                        |
+| code             | String  | Yes      | Source code to compile and execute                                                                                                                       |
+| description      | String  | No       | Human-readable scenario description                                                                                                                      |
+| measurement_mode | String  | No       | Measurement strategy: `process` (default, entire program), `external` (single iteration within process), `internal` (multiple iterations within process) |
+| compile_options  | List    | No       | Compiler flags for compiled languages. Test-level overrides scenario-level                                                                               |
+| runtime_options  | List    | No       | Runtime interpreter flags for non-compiled languages. Test-level overrides scenario-level                                                                |
+| arguments        | List    | No       | Program arguments. Test-level overrides scenario-level. Supports strings, numbers, booleans                                                              |
+| framework        | String  | No       | Required for C#: target framework (e.g.,net8.0)                                                                                                          |
+| dependencies     | List    | No       | External package dependencies with name and optional version                                                                                             |
+| affinity         | List    | No       | CPU core pinning (e.g.,[0, 1] restricts to cores 0-1). Test-level overrides scenario-level                                                               |
+| niceness         | Integer | No       | Process priority (-20 highest, 19 lowest). Test-level overrides scenario-level                                                                           |
+| stdin            | Binary  | No       | Base64-encoded input piped to program. Test-level overrides scenario-level                                                                               |
+| expected_stdout  | Binary  | No       | Base64-encoded expected output for verification. Test-level overrides scenario-level                                                                     |

@@ -16,13 +16,46 @@ use std::process::{Child, Output};
 use std::time::Instant;
 
 trait Bundle {
-    fn new() -> Result<Self, Box<dyn std::error::Error>>
+    fn new(pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>>
     where
         Self: Sized;
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>>;
     fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>>;
     fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>>;
     fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>>;
+}
+
+struct BundleConfig {
+    rapl: bool,
+    misses: bool,
+    cstates: bool,
+    cycles: bool,
+}
+
+impl BundleConfig {
+    fn create_bundles(
+        &self,
+        pid: Option<i32>,
+    ) -> Result<Vec<Box<dyn Bundle>>, Box<dyn std::error::Error>> {
+        let mut bundles: Vec<Box<dyn Bundle>> = vec![];
+
+        bundles.push(Box::new(TimeBundle::new(None)?));
+
+        if self.rapl {
+            bundles.push(Box::new(RaplBundle::new(None)?));
+        }
+        if self.misses {
+            bundles.push(Box::new(MissesBundle::new(pid)?));
+        }
+        if self.cstates {
+            bundles.push(Box::new(CStateBundle::new(None)?));
+        }
+        if self.cycles {
+            bundles.push(Box::new(CyclesBundle::new(pid)?));
+        }
+
+        Ok(bundles)
+    }
 }
 
 struct RaplCounter {
@@ -36,7 +69,6 @@ struct RaplBundle {
 }
 
 struct MissesBundle {
-    group: Group,
     counters: HashMap<&'static str, Counter>,
 }
 
@@ -46,11 +78,43 @@ struct CStateBundle {
 
 struct CyclesBundle {
     counter: Counter,
+}
+
+struct TimeBundle {
     start_time: Option<Instant>,
 }
 
+impl Bundle for TimeBundle {
+    fn new(_pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self { start_time: None })
+    }
+
+    fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.start_time = Some(Instant::now());
+        Ok(())
+    }
+
+    fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.start_time = None;
+        Ok(())
+    }
+
+    fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
+        let mut results = HashMap::new();
+        if let Some(start) = self.start_time {
+            let elapsed_micros = start.elapsed().as_micros() as u64;
+            results.insert("time".to_string(), elapsed_micros.to_string());
+        }
+        Ok(results)
+    }
+}
+
 impl Bundle for RaplBundle {
-    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(_pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
         let rapl_events = vec![
             "energy-pkg",
             "energy-cores",
@@ -117,8 +181,7 @@ impl Bundle for RaplBundle {
 }
 
 impl Bundle for MissesBundle {
-    fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let mut group = Group::new()?;
+    fn new(pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
         let mut counters = HashMap::new();
 
         const L1D_MISS: Cache = Cache {
@@ -137,34 +200,83 @@ impl Bundle for MissesBundle {
             result: CacheResult::MISS,
         };
 
-        if let Ok(l1d_counter) = group.add(&Builder::new(L1D_MISS)) {
-            counters.insert("l1d_misses", l1d_counter);
-        }
-        if let Ok(l1i_counter) = group.add(&Builder::new(L1I_MISS)) {
-            counters.insert("l1i_misses", l1i_counter);
-        }
-        if let Ok(llc_counter) = group.add(&Builder::new(LLC_MISS)) {
-            counters.insert("llc_misses", llc_counter);
-        }
-        if let Ok(branch_counter) = group.add(&Builder::new(Hardware::BRANCH_MISSES)) {
-            counters.insert("branch_misses", branch_counter);
+        if let Some(process_id) = pid {
+            if let Ok(l1d_counter) = Builder::new(L1D_MISS)
+                .observe_pid(process_id)
+                .inherit(true)
+                .exclude_kernel(false)
+                .exclude_hv(false)
+                .enable_on_exec(true)
+                .build()
+            {
+                counters.insert("l1d_misses", l1d_counter);
+            }
+            if let Ok(l1i_counter) = Builder::new(L1I_MISS)
+                .observe_pid(process_id)
+                .inherit(true)
+                .exclude_kernel(false)
+                .exclude_hv(false)
+                .enable_on_exec(true)
+                .build()
+            {
+                counters.insert("l1i_misses", l1i_counter);
+            }
+            if let Ok(llc_counter) = Builder::new(LLC_MISS)
+                .observe_pid(process_id)
+                .inherit(true)
+                .exclude_kernel(false)
+                .exclude_hv(false)
+                .enable_on_exec(true)
+                .build()
+            {
+                counters.insert("llc_misses", llc_counter);
+            }
+            if let Ok(branch_counter) = Builder::new(Hardware::BRANCH_MISSES)
+                .observe_pid(process_id)
+                .inherit(true)
+                .exclude_kernel(false)
+                .exclude_hv(false)
+                .enable_on_exec(true)
+                .build()
+            {
+                counters.insert("branch_misses", branch_counter);
+            }
+        } else {
+            if let Ok(l1d_counter) = Builder::new(L1D_MISS).build() {
+                counters.insert("l1d_misses", l1d_counter);
+            }
+            if let Ok(l1i_counter) = Builder::new(L1I_MISS).build() {
+                counters.insert("l1i_misses", l1i_counter);
+            }
+            if let Ok(llc_counter) = Builder::new(LLC_MISS).build() {
+                counters.insert("llc_misses", llc_counter);
+            }
+            if let Ok(branch_counter) = Builder::new(Hardware::BRANCH_MISSES).build() {
+                counters.insert("branch_misses", branch_counter);
+            }
         }
 
-        Ok(Self { group, counters })
+        Ok(Self { counters })
     }
 
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.group.enable()?;
+        for counter in self.counters.values_mut() {
+            counter.enable()?;
+        }
         Ok(())
     }
 
     fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.group.disable()?;
+        for counter in self.counters.values_mut() {
+            counter.disable()?;
+        }
         Ok(())
     }
 
     fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.group.reset()?;
+        for counter in self.counters.values_mut() {
+            counter.reset()?;
+        }
         Ok(())
     }
 
@@ -179,7 +291,7 @@ impl Bundle for MissesBundle {
 }
 
 impl Bundle for CStateBundle {
-    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(_pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
         let core_events = vec![
             "c1-residency",
             "c3-residency",
@@ -290,20 +402,26 @@ impl Bundle for CStateBundle {
 }
 
 impl Bundle for CyclesBundle {
-    fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let counter = Builder::new(Hardware::CPU_CYCLES)
-            .exclude_kernel(false)
-            .exclude_hv(false)
-            .build()?;
+    fn new(pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
+        let counter = if let Some(process_id) = pid {
+            Builder::new(Hardware::CPU_CYCLES)
+                .exclude_kernel(false)
+                .exclude_hv(false)
+                .observe_pid(process_id)
+                .inherit(true)
+                .enable_on_exec(true)
+                .build()?
+        } else {
+            Builder::new(Hardware::CPU_CYCLES)
+                .exclude_kernel(false)
+                .exclude_hv(false)
+                .build()?
+        };
 
-        Ok(Self {
-            counter,
-            start_time: None,
-        })
+        Ok(Self { counter })
     }
 
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.start_time = Some(Instant::now());
         self.counter.enable()?;
         Ok(())
     }
@@ -314,22 +432,14 @@ impl Bundle for CyclesBundle {
     }
 
     fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.start_time = None;
         self.counter.reset()?;
         Ok(())
     }
 
     fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
         let mut results = HashMap::new();
-
         let cycles = self.counter.read()?;
         results.insert("cycles".to_string(), cycles.to_string());
-
-        if let Some(start) = self.start_time {
-            let elapsed_micros = start.elapsed().as_micros() as u64;
-            results.insert("time".to_string(), elapsed_micros.to_string());
-        }
-
         Ok(results)
     }
 }
@@ -387,20 +497,13 @@ impl Measurement {
 impl MeasureCommand {
     pub fn handle() -> Result<(), Box<dyn std::error::Error>> {
         let args = <Self as clap::Parser>::parse();
-        let mut bundles: Vec<Box<dyn Bundle>> = vec![];
 
-        if args.rapl {
-            bundles.push(Box::new(RaplBundle::new()?));
-        }
-        if args.misses {
-            bundles.push(Box::new(MissesBundle::new()?));
-        }
-        if args.cstates {
-            bundles.push(Box::new(CStateBundle::new()?));
-        }
-        if args.cycles {
-            bundles.push(Box::new(CyclesBundle::new()?));
-        }
+        let bundle_config = BundleConfig {
+            rapl: args.rapl,
+            misses: args.misses,
+            cstates: args.cstates,
+            cycles: args.cycles,
+        };
 
         fn write_measurements(
             measurements: Vec<Measurement>,
@@ -442,7 +545,7 @@ impl MeasureCommand {
                 }
 
                 if let Ok(measurements) =
-                    Self::process_test(&mut scenario, test, &mut bundles, 0, iterations)
+                    Self::process_test(&mut scenario, test, &bundle_config, 0, iterations)
                 {
                     write_measurements(measurements, &output_path)?;
 
@@ -458,7 +561,7 @@ impl MeasureCommand {
                 test.name = Some("1".to_string());
 
                 if let Ok(measurements) =
-                    Self::process_test(&mut scenario, test, &mut bundles, 0, iterations)
+                    Self::process_test(&mut scenario, test, &bundle_config, 0, iterations)
                 {
                     write_measurements(measurements, &output_path)?;
 
@@ -476,7 +579,7 @@ impl MeasureCommand {
     fn process_test(
         scenario: &mut Scenario,
         mut test: Test,
-        bundles: &mut Vec<Box<dyn Bundle>>,
+        bundle_config: &BundleConfig,
         iter_index: usize,
         iterations: usize,
     ) -> Result<Vec<Measurement>, Box<dyn std::error::Error>> {
@@ -526,13 +629,31 @@ impl MeasureCommand {
         info!("{} Measurement start", context);
         let measurements = match measurement_mode {
             MeasurementMode::Internal => Self::measure_internal(
-                scenario, &test, bundles, iterations, &affinity, niceness, &context,
+                scenario,
+                &test,
+                bundle_config,
+                iterations,
+                &affinity,
+                niceness,
+                &context,
             )?,
             MeasurementMode::External => Self::measure_external(
-                scenario, &test, bundles, iterations, &affinity, niceness, &context,
+                scenario,
+                &test,
+                bundle_config,
+                iterations,
+                &affinity,
+                niceness,
+                &context,
             )?,
             MeasurementMode::Process => Self::measure_process(
-                scenario, &test, bundles, iterations, &affinity, niceness, &context,
+                scenario,
+                &test,
+                bundle_config,
+                iterations,
+                &affinity,
+                niceness,
+                &context,
             )?,
         };
 
@@ -620,13 +741,13 @@ impl MeasureCommand {
 
             for (key, value) in data {
                 match key.as_str() {
+                    "time" => measurement.time = value.parse().ok(),
                     "energy-pkg" => measurement.pkg = value.parse().ok(),
                     "energy-cores" => measurement.cores = value.parse().ok(),
                     "energy-gpu" => measurement.gpu = value.parse().ok(),
                     "energy-ram" => measurement.ram = value.parse().ok(),
                     "energy-psys" => measurement.psys = value.parse().ok(),
                     "cycles" => measurement.cycles = value.parse().ok(),
-                    "time" => measurement.time = value.parse().ok(),
                     "l1d_misses" => measurement.l1d_misses = value.parse().ok(),
                     "l1i_misses" => measurement.l1i_misses = value.parse().ok(),
                     "llc_misses" => measurement.llc_misses = value.parse().ok(),
@@ -677,7 +798,7 @@ impl MeasureCommand {
     fn measure_internal(
         scenario: &mut Scenario,
         test: &Test,
-        bundles: &mut Vec<Box<dyn Bundle>>,
+        bundle_config: &BundleConfig,
         iterations: usize,
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
@@ -688,21 +809,24 @@ impl MeasureCommand {
         signal::set_iterations(iterations)?;
 
         let child = scenario.exec_test_async(test)?;
+        let pid = child.id() as i32;
+
+        let mut bundles = bundle_config.create_bundles(Some(pid))?;
 
         Self::configure_process(&child, affinity, niceness)?;
 
         for i in 1..=iterations {
             signal::wait_for_start();
 
-            Self::reset_and_enable_bundles(bundles, context)?;
+            Self::reset_and_enable_bundles(&mut bundles, context)?;
 
             signal::wait_for_end();
 
-            Self::disable_bundles(bundles, context)?;
+            Self::disable_bundles(&mut bundles, context)?;
 
             let mut measurement = Measurement::new(scenario, test, MeasurementMode::Internal, i);
 
-            Self::populate_measurement(&mut measurement, bundles, context)?;
+            Self::populate_measurement(&mut measurement, &mut bundles, context)?;
 
             measurements.push(measurement);
         }
@@ -719,7 +843,7 @@ impl MeasureCommand {
     fn measure_external(
         scenario: &mut Scenario,
         test: &Test,
-        bundles: &mut Vec<Box<dyn Bundle>>,
+        bundle_config: &BundleConfig,
         iterations: usize,
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
@@ -731,16 +855,19 @@ impl MeasureCommand {
             signal::set_iterations(1)?;
 
             let child = scenario.exec_test_async(test)?;
+            let pid = child.id() as i32;
+
+            let mut iter_bundles = bundle_config.create_bundles(Some(pid))?;
 
             Self::configure_process(&child, affinity, niceness)?;
 
             signal::wait_for_start();
 
-            Self::reset_and_enable_bundles(bundles, context)?;
+            Self::reset_and_enable_bundles(&mut iter_bundles, context)?;
 
             signal::wait_for_end();
 
-            Self::disable_bundles(bundles, context)?;
+            Self::disable_bundles(&mut iter_bundles, context)?;
 
             signal::cleanup_pipes();
 
@@ -750,7 +877,7 @@ impl MeasureCommand {
 
             let mut measurement = Measurement::new(scenario, test, MeasurementMode::External, i);
 
-            Self::populate_measurement(&mut measurement, bundles, context)?;
+            Self::populate_measurement(&mut measurement, &mut iter_bundles, context)?;
 
             measurements.push(measurement);
         }
@@ -761,7 +888,7 @@ impl MeasureCommand {
     fn measure_process(
         scenario: &mut Scenario,
         test: &Test,
-        bundles: &mut Vec<Box<dyn Bundle>>,
+        bundle_config: &BundleConfig,
         iterations: usize,
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
@@ -771,20 +898,23 @@ impl MeasureCommand {
 
         for i in 1..=iterations {
             let child = scenario.exec_test_async(test)?;
+            let pid = child.id() as i32;
+
+            let mut iter_bundles = bundle_config.create_bundles(Some(pid))?;
 
             Self::configure_process(&child, affinity, niceness)?;
 
-            Self::reset_and_enable_bundles(bundles, context)?;
+            Self::reset_and_enable_bundles(&mut iter_bundles, context)?;
 
             let output = child.wait_with_output()?;
 
-            Self::disable_bundles(bundles, context)?;
+            Self::disable_bundles(&mut iter_bundles, context)?;
 
             Self::validate_output(&output, context)?;
 
             let mut measurement = Measurement::new(scenario, test, MeasurementMode::Process, i);
 
-            Self::populate_measurement(&mut measurement, bundles, context)?;
+            Self::populate_measurement(&mut measurement, &mut iter_bundles, context)?;
 
             measurements.push(measurement);
         }
