@@ -17,26 +17,33 @@ show_usage() {
 Usage: glp [COMMAND] [SUBCOMMAND] [OPTIONS]
 
 Profile Management:
-  profile list         List all available TLP profiles
-  profile PROFILE      Enable a TLP profile (restarts TLP)
+  profile list       List all available TLP profiles
+  profile PROFILE    Enable a TLP profile (restarts TLP)
 
 CPU Management:
-  cpu disable PCT      Disable PCT% of CPUs (e.g., 50 for 50%)
-  cpu enable           Re-enable all CPUs
-  cpu disable-ht       Disable hyperthreading
-  cpu enable-ht        Re-enable hyperthreading
-  cpu disable-cstates  Disable all C-states
-  cpu enable-cstates   Re-enable all C-states
+  cpu disable [PCT]  Disable PCT% of CPUs (default: 100%)
+  cpu enable [all]   Re-enable all CPUs (default behavior)
+  cpu disable ht     Disable hyperthreading
+  cpu enable ht      Re-enable hyperthreading
+  cpu disable cs     Disable all C-states
+  cpu enable cs      Re-enable all C-states
+
+Security:
+  aslr disable       Disable ASLR (Address Space Layout Randomization)
+  aslr enable        Enable ASLR
 
 General:
-  help                 Show this help message
+  help               Show this help message
 
 Examples:
   glp profile list
   glp profile powersave
   glp cpu disable 50
-  glp cpu disable-ht
-  glp cpu disable-cstates
+  glp cpu disable
+  glp cpu enable
+  glp cpu disable ht
+  glp cpu enable cs
+  glp aslr disable
 
 Profiles are stored in: ${PROFILES_DIR}/
 
@@ -91,8 +98,7 @@ disable_cpus() {
     local percentage=$1
 
     if [ -z "$percentage" ]; then
-        echo "Error: Percentage required (e.g., 50 for 50%)"
-        return 1
+        percentage=100
     fi
 
     if ! [[ "$percentage" =~ ^[0-9]+$ ]] || [ "$percentage" -lt 0 ] || [ "$percentage" -gt 100 ]; then
@@ -140,7 +146,6 @@ disable_cpus() {
     echo "Disabled $count CPUs (CPU 0 is restricted)"
 }
 
-
 enable_cpus() {
     echo "Re-enabling all CPUs..."
 
@@ -151,8 +156,7 @@ enable_cpus() {
     echo "All CPUs re-enabled"
 }
 
-
-disable_cstates() {
+disable_cs() {
     echo "Disabling all C-states on all CPUs..."
 
     local count=0
@@ -165,7 +169,7 @@ disable_cstates() {
     echo "Disabled $count C-state entries across all CPUs"
 }
 
-enable_cstates() {
+enable_cs() {
     echo "Re-enabling all C-states on all CPUs..."
 
     local count=0
@@ -200,9 +204,32 @@ enable_ht() {
     echo "Hyperthreading enabled"
 }
 
+disable_aslr() {
+    if [ ! -f "/proc/sys/kernel/randomize_va_space" ]; then
+        echo "Error: ASLR control interface not available"
+        return 1
+    fi
+
+    echo "Disabling ASLR..."
+    echo 0 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
+    echo "ASLR disabled"
+}
+
+enable_aslr() {
+    if [ ! -f "/proc/sys/kernel/randomize_va_space" ]; then
+        echo "Error: ASLR control interface not available"
+        return 1
+    fi
+
+    echo "Enabling ASLR..."
+    echo 2 | sudo tee /proc/sys/kernel/randomize_va_space > /dev/null
+    echo "ASLR enabled"
+}
+
 main() {
     local command=$1
     local subcommand=$2
+    local arg3=$3
 
     case "$command" in
         profile)
@@ -220,26 +247,41 @@ main() {
         cpu)
             case "$subcommand" in
                 disable)
-                    disable_cpus "$3"
+                    if [ "$arg3" = "ht" ]; then
+                        disable_ht
+                    elif [ "$arg3" = "cstates" ]; then
+                        disable_cs
+                    else
+                        disable_cpus "$arg3"
+                    fi
                     ;;
                 enable)
-                    enable_cpus
-                    ;;
-                disable-ht)
-                    disable_ht
-                    ;;
-                enable-ht)
-                    enable_ht
-                    ;;
-                disable-cstates)
-                    disable_cstates
-                    ;;
-                enable-cstates)
-                    enable_cstates
+                    if [ "$arg3" = "ht" ]; then
+                        enable_ht
+                    elif [ "$arg3" = "cstates" ]; then
+                        enable_cs
+                    else
+                        enable_cpus
+                    fi
                     ;;
                 *)
                     echo "Unknown cpu subcommand: $subcommand"
-                    echo "Available: disable, enable, disable-ht, enable-ht, disable-cstates, enable-cstates"
+                    echo "Available: disable [PCT|ht|cstates], enable [ht|cstates]"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        aslr)
+            case "$subcommand" in
+                disable)
+                    disable_aslr
+                    ;;
+                enable)
+                    enable_aslr
+                    ;;
+                *)
+                    echo "Unknown aslr subcommand: $subcommand"
+                    echo "Available: disable, enable"
                     exit 1
                     ;;
             esac

@@ -16,7 +16,7 @@ use std::process::{Child, Output};
 use std::time::Instant;
 
 trait Bundle {
-    fn new(pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>>
+    fn new(affinity: &Option<Vec<usize>>) -> Result<Self, Box<dyn std::error::Error>>
     where
         Self: Sized;
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>>;
@@ -35,23 +35,23 @@ struct BundleConfig {
 impl BundleConfig {
     fn create_bundles(
         &self,
-        pid: Option<i32>,
+        affinity: &Option<Vec<usize>>,
     ) -> Result<Vec<Box<dyn Bundle>>, Box<dyn std::error::Error>> {
         let mut bundles: Vec<Box<dyn Bundle>> = vec![];
 
-        bundles.push(Box::new(TimeBundle::new(None)?));
+        bundles.push(Box::new(TimeBundle::new(affinity)?));
 
         if self.rapl {
-            bundles.push(Box::new(RaplBundle::new(None)?));
+            bundles.push(Box::new(RaplBundle::new(affinity)?));
         }
         if self.misses {
-            bundles.push(Box::new(MissesBundle::new(pid)?));
+            bundles.push(Box::new(MissesBundle::new(affinity)?));
         }
         if self.cstates {
-            bundles.push(Box::new(CStateBundle::new(None)?));
+            bundles.push(Box::new(CStateBundle::new(affinity)?));
         }
         if self.cycles {
-            bundles.push(Box::new(CyclesBundle::new(pid)?));
+            bundles.push(Box::new(CyclesBundle::new(affinity)?));
         }
 
         Ok(bundles)
@@ -69,7 +69,7 @@ struct RaplBundle {
 }
 
 struct MissesBundle {
-    counters: HashMap<&'static str, Counter>,
+    counters: HashMap<&'static str, Vec<Counter>>,
 }
 
 struct CStateBundle {
@@ -77,7 +77,7 @@ struct CStateBundle {
 }
 
 struct CyclesBundle {
-    counter: Counter,
+    counters: Vec<Counter>,
 }
 
 struct TimeBundle {
@@ -85,7 +85,7 @@ struct TimeBundle {
 }
 
 impl Bundle for TimeBundle {
-    fn new(_pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(_affinity: &Option<Vec<usize>>) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self { start_time: None })
     }
 
@@ -114,7 +114,7 @@ impl Bundle for TimeBundle {
 }
 
 impl Bundle for RaplBundle {
-    fn new(_pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(_affinity: &Option<Vec<usize>>) -> Result<Self, Box<dyn std::error::Error>> {
         let rapl_events = vec![
             "energy-pkg",
             "energy-cores",
@@ -181,8 +181,14 @@ impl Bundle for RaplBundle {
 }
 
 impl Bundle for MissesBundle {
-    fn new(pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(affinity: &Option<Vec<usize>>) -> Result<Self, Box<dyn std::error::Error>> {
         let mut counters = HashMap::new();
+
+        let cpus = if let Some(affinity_cpus) = affinity {
+            affinity_cpus.clone()
+        } else {
+            (0..num_cpus::get()).collect()
+        };
 
         const L1D_MISS: Cache = Cache {
             which: CacheId::L1D,
@@ -200,59 +206,55 @@ impl Bundle for MissesBundle {
             result: CacheResult::MISS,
         };
 
-        if let Some(process_id) = pid {
-            if let Ok(l1d_counter) = Builder::new(L1D_MISS)
-                .observe_pid(process_id)
-                .inherit(true)
-                .exclude_kernel(false)
-                .exclude_hv(false)
-                .enable_on_exec(true)
-                .build()
-            {
-                counters.insert("l1d_misses", l1d_counter);
+        enum EventType {
+            L1dMiss,
+            L1iMiss,
+            LlcMiss,
+            BranchMiss,
+        }
+
+        impl EventType {
+            fn name(&self) -> &'static str {
+                match self {
+                    EventType::L1dMiss => "l1d_misses",
+                    EventType::L1iMiss => "l1i_misses",
+                    EventType::LlcMiss => "llc_misses",
+                    EventType::BranchMiss => "branch_misses",
+                }
             }
-            if let Ok(l1i_counter) = Builder::new(L1I_MISS)
-                .observe_pid(process_id)
-                .inherit(true)
-                .exclude_kernel(false)
-                .exclude_hv(false)
-                .enable_on_exec(true)
-                .build()
-            {
-                counters.insert("l1i_misses", l1i_counter);
+
+            fn build_counter(&self, cpu: usize) -> Result<Counter, std::io::Error> {
+                let mut builder = match self {
+                    EventType::L1dMiss => Builder::new(L1D_MISS),
+                    EventType::L1iMiss => Builder::new(L1I_MISS),
+                    EventType::LlcMiss => Builder::new(LLC_MISS),
+                    EventType::BranchMiss => Builder::new(Hardware::BRANCH_MISSES),
+                };
+
+                builder
+                    .one_cpu(cpu)
+                    .any_pid()
+                    .exclude_kernel(false)
+                    .exclude_hv(false)
+                    .build()
             }
-            if let Ok(llc_counter) = Builder::new(LLC_MISS)
-                .observe_pid(process_id)
-                .inherit(true)
-                .exclude_kernel(false)
-                .exclude_hv(false)
-                .enable_on_exec(true)
-                .build()
-            {
-                counters.insert("llc_misses", llc_counter);
-            }
-            if let Ok(branch_counter) = Builder::new(Hardware::BRANCH_MISSES)
-                .observe_pid(process_id)
-                .inherit(true)
-                .exclude_kernel(false)
-                .exclude_hv(false)
-                .enable_on_exec(true)
-                .build()
-            {
-                counters.insert("branch_misses", branch_counter);
-            }
-        } else {
-            if let Ok(l1d_counter) = Builder::new(L1D_MISS).build() {
-                counters.insert("l1d_misses", l1d_counter);
-            }
-            if let Ok(l1i_counter) = Builder::new(L1I_MISS).build() {
-                counters.insert("l1i_misses", l1i_counter);
-            }
-            if let Ok(llc_counter) = Builder::new(LLC_MISS).build() {
-                counters.insert("llc_misses", llc_counter);
-            }
-            if let Ok(branch_counter) = Builder::new(Hardware::BRANCH_MISSES).build() {
-                counters.insert("branch_misses", branch_counter);
+        }
+
+        let events = [
+            EventType::L1dMiss,
+            EventType::L1iMiss,
+            EventType::LlcMiss,
+            EventType::BranchMiss,
+        ];
+
+        for event in &events {
+            let cpu_counters: Vec<Counter> = cpus
+                .iter()
+                .filter_map(|&cpu| event.build_counter(cpu).ok())
+                .collect();
+
+            if !cpu_counters.is_empty() {
+                counters.insert(event.name(), cpu_counters);
             }
         }
 
@@ -260,38 +262,49 @@ impl Bundle for MissesBundle {
     }
 
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        for counter in self.counters.values_mut() {
-            counter.enable()?;
+        for cpu_counters in self.counters.values_mut() {
+            for counter in cpu_counters {
+                counter.enable()?;
+            }
         }
         Ok(())
     }
 
     fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        for counter in self.counters.values_mut() {
-            counter.disable()?;
+        for cpu_counters in self.counters.values_mut() {
+            for counter in cpu_counters {
+                counter.disable()?;
+            }
         }
         Ok(())
     }
 
     fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        for counter in self.counters.values_mut() {
-            counter.reset()?;
+        for cpu_counters in self.counters.values_mut() {
+            for counter in cpu_counters {
+                counter.reset()?;
+            }
         }
         Ok(())
     }
 
     fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
         let mut results = HashMap::new();
-        for (name, counter) in &mut self.counters {
-            let value = counter.read()?;
-            results.insert(name.to_string(), value.to_string());
+
+        for (name, cpu_counters) in &mut self.counters {
+            let mut total: u64 = 0;
+            for counter in cpu_counters {
+                total += counter.read()?;
+            }
+            results.insert(name.to_string(), total.to_string());
         }
+
         Ok(results)
     }
 }
 
 impl Bundle for CStateBundle {
-    fn new(_pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(affinity: &Option<Vec<usize>>) -> Result<Self, Box<dyn std::error::Error>> {
         let core_events = vec![
             "c1-residency",
             "c3-residency",
@@ -306,10 +319,15 @@ impl Bundle for CStateBundle {
             "c10-residency",
         ];
         let mut counters = HashMap::new();
-        let num_cpus = num_cpus::get_physical();
+
+        let cpus = if let Some(affinity_cpus) = affinity {
+            affinity_cpus.clone()
+        } else {
+            (0..num_cpus::get_physical()).collect()
+        };
 
         for event_name in core_events {
-            for cpu in 0..num_cpus {
+            for &cpu in &cpus {
                 if let Ok(mut builder) = Dynamic::builder("cstate_core") {
                     if builder.event(event_name).is_ok() {
                         if let Ok(built_event) = builder.build() {
@@ -402,44 +420,60 @@ impl Bundle for CStateBundle {
 }
 
 impl Bundle for CyclesBundle {
-    fn new(pid: Option<i32>) -> Result<Self, Box<dyn std::error::Error>> {
-        let counter = if let Some(process_id) = pid {
-            Builder::new(Hardware::CPU_CYCLES)
-                .exclude_kernel(false)
-                .exclude_hv(false)
-                .observe_pid(process_id)
-                .inherit(true)
-                .enable_on_exec(true)
-                .build()?
+    fn new(affinity: &Option<Vec<usize>>) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut counters = Vec::new();
+
+        let cpus = if let Some(affinity_cpus) = affinity {
+            affinity_cpus.clone()
         } else {
-            Builder::new(Hardware::CPU_CYCLES)
-                .exclude_kernel(false)
-                .exclude_hv(false)
-                .build()?
+            (0..num_cpus::get()).collect()
         };
 
-        Ok(Self { counter })
+        for &cpu in &cpus {
+            if let Ok(counter) = Builder::new(Hardware::CPU_CYCLES)
+                .one_cpu(cpu)
+                .any_pid()
+                .exclude_kernel(false)
+                .exclude_hv(false)
+                .build()
+            {
+                counters.push(counter);
+            }
+        }
+
+        Ok(Self { counters })
     }
 
     fn enable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.counter.enable()?;
+        for counter in &mut self.counters {
+            counter.enable()?;
+        }
         Ok(())
     }
 
     fn disable(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.counter.disable()?;
+        for counter in &mut self.counters {
+            counter.disable()?;
+        }
         Ok(())
     }
 
     fn reset(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.counter.reset()?;
+        for counter in &mut self.counters {
+            counter.reset()?;
+        }
         Ok(())
     }
 
     fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
         let mut results = HashMap::new();
-        let cycles = self.counter.read()?;
-        results.insert("cycles".to_string(), cycles.to_string());
+
+        let mut total_cycles: u64 = 0;
+        for counter in &mut self.counters {
+            total_cycles += counter.read()?;
+        }
+
+        results.insert("cycles".to_string(), total_cycles.to_string());
         Ok(results)
     }
 }
@@ -462,11 +496,25 @@ impl Measurement {
         Ok(())
     }
 
-    fn new(scenario: &Scenario, test: &Test, mode: MeasurementMode, iteration: usize) -> Self {
+    fn new(
+        scenario: &Scenario,
+        test: &Test,
+        mode: MeasurementMode,
+        iteration: usize,
+        affinity: &Option<Vec<usize>>,
+        niceness: Option<i32>,
+    ) -> Self {
         Self {
             language: scenario.language.to_string(),
             scenario: scenario.name.clone(),
             test: test.name.as_ref().unwrap().clone(),
+            nice: niceness,
+            affinity: affinity.as_ref().map(|cpus| {
+                cpus.iter()
+                    .map(|cpu| cpu.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            }),
             mode,
             iteration,
             time: None,
@@ -809,9 +857,8 @@ impl MeasureCommand {
         signal::set_iterations(iterations)?;
 
         let child = scenario.exec_test_async(test)?;
-        let pid = child.id() as i32;
 
-        let mut bundles = bundle_config.create_bundles(Some(pid))?;
+        let mut bundles = bundle_config.create_bundles(affinity)?;
 
         Self::configure_process(&child, affinity, niceness)?;
 
@@ -824,7 +871,14 @@ impl MeasureCommand {
 
             Self::disable_bundles(&mut bundles, context)?;
 
-            let mut measurement = Measurement::new(scenario, test, MeasurementMode::Internal, i);
+            let mut measurement = Measurement::new(
+                scenario,
+                test,
+                MeasurementMode::Internal,
+                i,
+                affinity,
+                niceness,
+            );
 
             Self::populate_measurement(&mut measurement, &mut bundles, context)?;
 
@@ -855,9 +909,8 @@ impl MeasureCommand {
             signal::set_iterations(1)?;
 
             let child = scenario.exec_test_async(test)?;
-            let pid = child.id() as i32;
 
-            let mut iter_bundles = bundle_config.create_bundles(Some(pid))?;
+            let mut iter_bundles = bundle_config.create_bundles(affinity)?;
 
             Self::configure_process(&child, affinity, niceness)?;
 
@@ -875,7 +928,14 @@ impl MeasureCommand {
 
             Self::validate_output(&output, context)?;
 
-            let mut measurement = Measurement::new(scenario, test, MeasurementMode::External, i);
+            let mut measurement = Measurement::new(
+                scenario,
+                test,
+                MeasurementMode::External,
+                i,
+                affinity,
+                niceness,
+            );
 
             Self::populate_measurement(&mut measurement, &mut iter_bundles, context)?;
 
@@ -898,9 +958,8 @@ impl MeasureCommand {
 
         for i in 1..=iterations {
             let child = scenario.exec_test_async(test)?;
-            let pid = child.id() as i32;
 
-            let mut iter_bundles = bundle_config.create_bundles(Some(pid))?;
+            let mut iter_bundles = bundle_config.create_bundles(affinity)?;
 
             Self::configure_process(&child, affinity, niceness)?;
 
@@ -912,7 +971,14 @@ impl MeasureCommand {
 
             Self::validate_output(&output, context)?;
 
-            let mut measurement = Measurement::new(scenario, test, MeasurementMode::Process, i);
+            let mut measurement = Measurement::new(
+                scenario,
+                test,
+                MeasurementMode::Process,
+                i,
+                affinity,
+                niceness,
+            );
 
             Self::populate_measurement(&mut measurement, &mut iter_bundles, context)?;
 
