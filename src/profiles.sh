@@ -249,7 +249,7 @@ main() {
                 disable)
                     if [ "$arg3" = "ht" ]; then
                         disable_ht
-                    elif [ "$arg3" = "cstates" ]; then
+                    elif [ "$arg3" = "cs" ]; then
                         disable_cs
                     else
                         disable_cpus "$arg3"
@@ -258,7 +258,7 @@ main() {
                 enable)
                     if [ "$arg3" = "ht" ]; then
                         enable_ht
-                    elif [ "$arg3" = "cstates" ]; then
+                    elif [ "$arg3" = "cs" ]; then
                         enable_cs
                     else
                         enable_cpus
@@ -266,7 +266,7 @@ main() {
                     ;;
                 *)
                     echo "Unknown cpu subcommand: $subcommand"
-                    echo "Available: disable [PCT|ht|cstates], enable [ht|cstates]"
+                    echo "Available: disable [PCT|ht|cs], enable [ht|cs]"
                     exit 1
                     ;;
             esac
