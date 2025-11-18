@@ -28,7 +28,7 @@ debug: $(M_SO_DEBUG) $(M_A_DEBUG)
 	sudo install -m 755 $(GL_BIN_DEBUG) $(GL_BIN_DIR)/green-languages
 	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(GL_BIN_DIR)/green-languages
 	sudo ln -sf green-languages $(GL_BIN_DIR)/gl
-	sudo install -m 755 src/profiles.sh $(GL_BIN_DIR)/glp
+	sudo install -m 755 scripts/profiles.sh $(GL_BIN_DIR)/glp
 	sudo install -d -m 755 $(GL_LIB_DIR)/glp.d
 	sudo install -m 644 profiles/*.conf $(GL_LIB_DIR)/glp.d/ 2>/dev/null || true
 	sudo sysctl kernel.perf_event_paranoid=2
@@ -44,7 +44,7 @@ release: $(M_SO_RELEASE) $(M_A_RELEASE)
 	sudo install -m 755 $(GL_BIN_RELEASE) $(GL_BIN_DIR)/green-languages
 	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(GL_BIN_DIR)/green-languages
 	sudo ln -sf green-languages $(GL_BIN_DIR)/gl
-	sudo install -m 755 src/profiles.sh $(GL_BIN_DIR)/glp
+	sudo install -m 755 scripts/profiles.sh $(GL_BIN_DIR)/glp
 	sudo install -d -m 755 $(GL_LIB_DIR)/glp.d
 	sudo install -m 644 profiles/*.conf $(GL_LIB_DIR)/glp.d/ 2>/dev/null || true
 	sudo sysctl kernel.perf_event_paranoid=2
