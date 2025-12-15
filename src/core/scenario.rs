@@ -1,11 +1,14 @@
 use super::util::{lib_dir_str, results_dir, CommandEnvExt};
 use super::{Language, Scenario, ScenarioError, ScenarioResult, Test};
+use nix::sched::{sched_setaffinity, CpuSet};
+use nix::unistd::Pid;
 use serde::Deserialize;
 use serde_yml::Deserializer;
 use std::fs::{self, File};
 use std::io::{BufReader, Error, ErrorKind, Read};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 
 impl ScenarioResult {
     pub fn success() -> Self {
@@ -111,12 +114,32 @@ impl Scenario {
         self.scenario_dir().join("stdin.txt")
     }
 
-    pub fn exec_command(&self, test: &Test) -> Result<Vec<String>, ScenarioError> {
+    pub fn exec_command(
+        &self,
+        test: &Test,
+        affinity: &Option<Vec<usize>>,
+        niceness: Option<i32>,
+    ) -> Result<Command, ScenarioError> {
+        match self.language {
+            Language::C | Language::Cpp | Language::Rust | Language::Cs => {
+                if test.runtime_options.is_some() || self.runtime_options.is_some() {
+                    return Err(ScenarioError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "Runtime options are not supported for compiled language '{}'",
+                            self.language
+                        ),
+                    )));
+                }
+            }
+            _ => {}
+        }
+
         let target = self.target_path(&test).to_string_lossy().to_string();
         let test_dir = self.test_dir(&test).to_string_lossy().to_string();
 
-        match self.language {
-            Language::C | Language::Cpp => Ok(vec![target]),
+        let mut command = match self.language {
+            Language::C | Language::Cpp => vec![target],
             Language::Cs => {
                 let executable = self.test_dir(test).join("Program");
                 if !executable.exists() {
@@ -125,17 +148,18 @@ impl Scenario {
                         "C# executable not found",
                     )));
                 }
-                Ok(vec![executable.to_string_lossy().to_string()])
+                vec![executable.to_string_lossy().to_string()]
             }
             Language::Java => {
-                let cp_flags = format!("{}:{}", lib_dir_str(), test_dir);
-                Ok(vec![
+                let cp_flags = format!("{}/*:{}", lib_dir_str(), test_dir);
+                vec![
                     "java".to_string(),
                     "--enable-native-access=ALL-UNNAMED".to_string(),
+                    "--enable-preview".to_string(),
                     "-cp".to_string(),
                     cp_flags,
                     self.language.target_file().to_string(),
-                ])
+                ]
             }
             Language::Rust => {
                 let test_dir = self.test_dir(test);
@@ -152,11 +176,87 @@ impl Scenario {
                     )));
                 };
 
-                Ok(vec![executable.to_string_lossy().to_string()])
+                vec![executable.to_string_lossy().to_string()]
             }
-            Language::Python => Ok(vec![]),
-            Language::Ruby => Ok(vec![]),
+            Language::Python => vec![],
+            Language::Ruby => vec![],
+        };
+
+        let runtime_opts = test
+            .runtime_options
+            .as_ref()
+            .or(self.runtime_options.as_ref());
+        if let Some(opts) = runtime_opts {
+            for opt in opts {
+                command.extend(opt.split_whitespace().map(|s| s.to_string()));
+            }
         }
+
+        let args = test.arguments.as_ref().or(self.arguments.as_ref());
+        if let Some(arguments) = args {
+            for arg in arguments {
+                command.extend(arg.split_whitespace().map(|s| s.to_string()));
+            }
+        }
+
+        let stdout_path = self.stdout_path(&test);
+        let _ = std::fs::remove_file(&stdout_path);
+        let stdout_file = File::create(&stdout_path)?;
+        let test_stdin_path = self.test_stdin_path(&test);
+        let scenario_stdin_path = self.scenario_stdin_path();
+        let test_stdin_config = if test_stdin_path.exists() {
+            let stdin_file = File::open(&test_stdin_path)?;
+            Stdio::from(stdin_file)
+        } else if scenario_stdin_path.exists() {
+            let stdin_file = File::open(&scenario_stdin_path)?;
+            Stdio::from(stdin_file)
+        } else {
+            Stdio::null()
+        };
+
+        let affinity_clone = affinity.clone();
+
+        let mut cmd = Command::new(&command[0]);
+        cmd.args(&command[1..])
+            .with_measurements_env()
+            .stdout(Stdio::from(stdout_file))
+            .stderr(Stdio::piped())
+            .stdin(test_stdin_config);
+
+        unsafe {
+            cmd.pre_exec(move || {
+                if let Some(cpus) = &affinity_clone {
+                    let mut cpu_set = CpuSet::new();
+                    for &cpu in cpus {
+                        cpu_set.set(cpu).map_err(|e| {
+                            std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                format!("Failed to add CPU {} to affinity set: {}", cpu, e),
+                            )
+                        })?;
+                    }
+                    sched_setaffinity(Pid::from_raw(0), &cpu_set).map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("Failed to set CPU affinity: {}", e),
+                        )
+                    })?;
+                }
+
+                if let Some(nice_value) = niceness {
+                    if libc::setpriority(libc::PRIO_PROCESS, 0, nice_value) != 0 {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            "Failed to set process priority",
+                        ));
+                    }
+                }
+
+                Ok(())
+            });
+        }
+
+        Ok(cmd)
     }
 
     pub fn build_command(&self, test: &Test) -> Vec<String> {
@@ -189,7 +289,7 @@ impl Scenario {
                 "-lmeasurements".to_string(),
             ],
             Language::Java => {
-                let cp_flags = format!("{}:{}", lib_dir_str(), test_dir);
+                let cp_flags = format!("{}/*:{}", lib_dir_str(), test_dir);
                 vec![
                     "javac".to_string(),
                     source,
@@ -284,68 +384,6 @@ impl Scenario {
             test.expected_stdout.take();
             Ok(ScenarioResult::failed_with(code, out, err))
         }
-    }
-
-    pub fn exec_test_async(&self, test: &Test) -> Result<Child, ScenarioError> {
-        match self.language {
-            Language::C | Language::Cpp | Language::Rust | Language::Cs => {
-                let has_runtime_opts =
-                    test.runtime_options.is_some() || self.runtime_options.is_some();
-                if has_runtime_opts {
-                    return Err(ScenarioError::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        format!(
-                            "Runtime options are not supported for compiled language '{}'",
-                            self.language
-                        ),
-                    )));
-                }
-            }
-            _ => {}
-        }
-
-        let mut command = self.exec_command(&test)?;
-
-        let runtime_opts = test
-            .runtime_options
-            .as_ref()
-            .or(self.runtime_options.as_ref());
-        if let Some(opts) = runtime_opts {
-            for opt in opts {
-                command.extend(opt.split_whitespace().map(|s| s.to_string()));
-            }
-        }
-
-        let args = test.arguments.as_ref().or(self.arguments.as_ref());
-        if let Some(arguments) = args {
-            for arg in arguments {
-                command.extend(arg.split_whitespace().map(|s| s.to_string()));
-            }
-        }
-
-        let stdout_path = self.stdout_path(&test);
-        let output_file = File::create(&stdout_path)?;
-        let test_stdin_path = self.test_stdin_path(&test);
-        let scenario_stdin_path = self.scenario_stdin_path();
-        let stdin_config = if test_stdin_path.exists() {
-            let input_file = File::open(&test_stdin_path)?;
-            Stdio::from(input_file)
-        } else if scenario_stdin_path.exists() {
-            let input_file = File::open(&scenario_stdin_path)?;
-            Stdio::from(input_file)
-        } else {
-            Stdio::null()
-        };
-
-        let child = Command::new(&command[0])
-            .args(&command[1..])
-            .stdout(Stdio::from(output_file))
-            .stderr(Stdio::piped())
-            .stdin(stdin_config)
-            .with_measurements_env()
-            .spawn()?;
-
-        Ok(child)
     }
 
     pub fn verify_test(

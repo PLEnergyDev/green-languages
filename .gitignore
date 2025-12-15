@@ -22,3 +22,7 @@ target
 
 # App generated results
 results
+
+# Poetry files for Python scripts
+*.lock
+*.toml

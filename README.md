@@ -30,7 +30,7 @@ fibonacci,c,1,process,5,53974,0.83,0.606,0.0,,1.456,12048084,277,1372,0,343,2665
 | `--rapl`    | RAPL Energy Domains                        | Joules | System-Wide |
 | `--cycles`  | CPU Cycles                                 | Count  | Process     |
 | `--misses`  | L1D, L1I, LLC Loads Misses & Branch Misses | Count  | Process     |
-| `--cstates` | CPU Low Power C-States (CPU Idling)        | Count  | System-Wide |
+| `--cstates` | CPU Low Power C-States (CPU Idling)        | Micros | System-Wide |
 
 ## Scenarios
 

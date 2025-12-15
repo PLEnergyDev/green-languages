@@ -12,14 +12,20 @@ pub trait CommandEnvExt {
 
 impl CommandEnvExt for Command {
     fn with_measurements_env(&mut self) -> &mut Self {
+        let lib_dir = lib_dir_str();
         let extend_path_var = |var_name: &str| {
-            let current = env::var(var_name).unwrap_or_default();
-            format!("{}:{}", lib_dir_str(), current)
+            env::var(var_name)
+                .map(|current| format!("{}:{}", current, lib_dir))
+                .unwrap_or_else(|_| lib_dir.to_string())
         };
 
-        self.env("LIBRARY_PATH", extend_path_var("LIBRARY_PATH"))
-            .env("LD_LIBRARY_PATH", extend_path_var("LD_LIBRARY_PATH"))
-            .env("CPATH", extend_path_var("CPATH"))
+        let library_path = extend_path_var("GL_LIBRARY_PATH");
+        let ld_library_path = extend_path_var("GL_LD_LIBRARY_PATH");
+        let cpath = extend_path_var("GL_CPATH");
+
+        self.env("LIBRARY_PATH", library_path)
+            .env("LD_LIBRARY_PATH", ld_library_path)
+            .env("CPATH", cpath)
     }
 }
 

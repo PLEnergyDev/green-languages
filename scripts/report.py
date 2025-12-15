@@ -17,7 +17,7 @@ def report(df, group_by_cols, numeric_cols):
         output_df.columns = ["mean", "cv_%"]
         return output_df
 
-    grouped = df.groupby(group_by_cols)
+    grouped = df.groupby(group_by_cols, dropna=False)
 
     results = []
     for name, group in grouped:

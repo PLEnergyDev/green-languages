@@ -28,9 +28,10 @@ CPU Management:
   cpu disable cs     Disable all C-states
   cpu enable cs      Re-enable all C-states
 
-Security:
+OS Management:
   aslr disable       Disable ASLR (Address Space Layout Randomization)
   aslr enable        Enable ASLR
+  cache drop [LEVEL] Drop OS caches (default: 3 = all)
 
 General:
   help               Show this help message
@@ -44,6 +45,13 @@ Examples:
   glp cpu disable ht
   glp cpu enable cs
   glp aslr disable
+  glp cache drop
+  glp cache drop 1
+
+Cache Levels:
+  1 = Free pagecache only
+  2 = Free dentries and inodes only
+  3 = Free pagecache, dentries and inodes (default)
 
 Profiles are stored in: ${PROFILES_DIR}/
 
@@ -226,6 +234,27 @@ enable_aslr() {
     echo "ASLR enabled"
 }
 
+drop_caches() {
+    local level=$1
+
+    if [ -z "$level" ]; then
+        level=3
+    fi
+
+    if ! [[ "$level" =~ ^[1-3]$ ]]; then
+        echo "Error: Cache level must be 1, 2, or 3"
+        echo "  1 = Free pagecache"
+        echo "  2 = Free dentries and inodes"
+        echo "  3 = Free pagecache, dentries and inodes (default)"
+        return 1
+    fi
+
+    echo "Dropping caches (level $level)..."
+    sync
+    echo "$level" | sudo tee /proc/sys/vm/drop_caches > /dev/null
+    echo "Caches dropped"
+}
+
 main() {
     local command=$1
     local subcommand=$2
@@ -282,6 +311,18 @@ main() {
                 *)
                     echo "Unknown aslr subcommand: $subcommand"
                     echo "Available: disable, enable"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        cache)
+            case "$subcommand" in
+                drop)
+                    drop_caches "$arg3"
+                    ;;
+                *)
+                    echo "Unknown cache subcommand: $subcommand"
+                    echo "Available: drop [LEVEL]"
                     exit 1
                     ;;
             esac
