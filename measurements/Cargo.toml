@@ -1,6 +1,5 @@
 [package]
 name = "measurements"
-version = "0.1.0"
 edition = "2021"
 
 [lib]
@@ -11,9 +10,3 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 jni = "0.21"
 libc = "0.2.177"
 
-[profile.release]
-opt-level = 3
-debug = true
-lto = true
-codegen-units = 1
-panic = "abort"
