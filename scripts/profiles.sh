@@ -2,8 +2,7 @@
 
 set -e
 
-# Profiles directory in /usr/local/lib/green-languages
-PROFILES_DIR="/usr/local/lib/green-languages/glp.d"
+PROFILES_DIR="$GL_LIB_DIR/glp.d"
 
 check_tlp() {
     if ! command -v tlp &> /dev/null; then
