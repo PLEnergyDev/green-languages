@@ -8,12 +8,6 @@ GL_EXE := target/release/green-languages
 
 all: release
 
-$(M_SO_DEBUG) $(M_A_DEBUG):
-	cargo build --manifest-path measurements/Cargo.toml
-
-$(M_SO) $(M_Aa):
-	cargo build --release --manifest-path measurements/Cargo.toml
-
 release: $(M_SO) $(M_A)
 	sudo install -d -m755 $(GL_BIN_DIR)
 	sudo install -d -m755 $(GL_LIB_DIR)
@@ -21,7 +15,7 @@ release: $(M_SO) $(M_A)
 	sudo install -m755 $(M_A) $(GL_LIB_DIR)
 	sudo install -m644 $(M_HEADER) $(GL_LIB_DIR)
 	sudo install -m644 $(M_JNI) $(GL_LIB_DIR)
-	GL_LIB_DIR=$(GL_LIB_DIR) cargo build --release
+	GL_LIB_DIR=$(GL_LIB_DIR) cargo build --release --workspace
 	sudo install -m755 $(GL_EXE) $(GL_BIN_DIR)/green-languages
 	sudo setcap cap_sys_rawio,cap_perfmon,cap_sys_nice=ep $(GL_BIN_DIR)/green-languages
 	sudo install -m755 scripts/profiles.sh $(GL_BIN_DIR)/green-languages-profiles

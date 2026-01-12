@@ -1,16 +1,16 @@
 # green-languages
 
-`green-languages` (`gl`) is a CLI tool that measures energy consumption and other performance metrics of whole programs or individual lines of code across different programming languages. It provides start/end measurement markers to wrap code sections. These markers are also used to track the measurement count, allowing repeated measurements for the same code section within a loop to detect performance changes during program runtime.
+`green-languages` is a CLI tool that measures energy consumption and other performance metrics of whole programs or individual lines of code across different programming languages. It provides start/end measurement markers to wrap code sections. These markers are also used to track the measurement count, allowing repeated measurements for the same code section within a loop to detect performance changes during program runtime.
 
 ## Usage
 
 Provide a scenario and enable a performance metric to the `gl` CLI tool:
 
 ```sh
-gl fib.yml --rapl --cycles --misses --cstates -i5
+green-languages fib.yml --rapl --cycles --misses --cstates -i5
 ```
 
-Upon success, the `results` dir is created containing `results.csv`, `gl.log` and build artifacts. Contents of `results.csv`:
+Upon success, the `results` dir is created containing `results.csv`, `green-languages.log` and build artifacts. Contents of `results.csv`:
 
 ```csv
 scenario,language,test,mode,iteration,time,pkg,cores,gpu,dram,psys,cycles,l1d_misses,l1i_misses,llc_misses,branch_misses,c1_core_residency,c3_core_residency,c6_core_residency,c7_core_residency,c2_pkg_residency,c3_pkg_residency,c6_pkg_residency,c8_pkg_residency,c10_pkg_residency,ended
@@ -79,7 +79,7 @@ measurement_mode: external
 
 ```
 
-To measure individual lines of code in C multiple times, put the markers in an loop and enable the `measurement_mode: internal` flag. Then use `gl fib.yml --rapl -i10` with `-i, --iterations` and the iteration count. This will measure `printf("Hello, World!");` 10 times within the same process.
+To measure individual lines of code in C multiple times, put the markers in an loop and enable the `measurement_mode: internal` flag. Then use `green-languages fib.yml --rapl -i10` with `-i, --iterations` and the iteration count. This will measure `printf("Hello, World!");` 10 times within the same process.
 
 ```yml
 name: fibonacci

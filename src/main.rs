@@ -17,7 +17,7 @@ fn custom_format(w: &mut dyn Write, now: &mut DeferredNow, record: &Record) -> R
 fn configure_logger() -> Result<(), Box<dyn std::error::Error>> {
     let spec = FileSpec::default()
         .directory(results_dir())
-        .basename("gl")
+        .basename("green-languages")
         .suppress_timestamp();
     Logger::try_with_str("info")?
         .log_to_file(spec)
