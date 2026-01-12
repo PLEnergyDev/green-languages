@@ -2,7 +2,7 @@
 
 set -e
 
-PROFILES_DIR="$GL_LIB_DIR/glp.d"
+PROFILES_DIR="$GL_LIB_DIR/profiles/"
 
 check_tlp() {
     if ! command -v tlp &> /dev/null; then
@@ -13,7 +13,7 @@ check_tlp() {
 
 show_usage() {
     cat << EOF
-Usage: glp [COMMAND] [SUBCOMMAND] [OPTIONS]
+Usage: green-languages-profiles [COMMAND] [SUBCOMMAND] [OPTIONS]
 
 Profile Management:
   profile list       List all available TLP profiles
@@ -36,16 +36,16 @@ General:
   help               Show this help message
 
 Examples:
-  glp profile list
-  glp profile powersave
-  glp cpu disable 50
-  glp cpu disable
-  glp cpu enable
-  glp cpu disable ht
-  glp cpu enable cs
-  glp aslr disable
-  glp cache drop
-  glp cache drop 1
+  green-languages-profiles profile list
+  green-languages-profiles profile powersave
+  green-languages-profiles cpu disable 50
+  green-languages-profiles cpu disable
+  green-languages-profiles cpu enable
+  green-languages-profiles cpu disable ht
+  green-languages-profiles cpu enable cs
+  green-languages-profiles aslr disable
+  green-languages-profiles cache drop
+  green-languages-profiles cache drop 1
 
 Cache Levels:
   1 = Free pagecache only
@@ -59,7 +59,7 @@ EOF
 
 list_profiles() {
     if [ ! -d "$PROFILES_DIR" ]; then
-        echo "Error: glp.d directory not found at $PROFILES_DIR"
+        echo "Error: green-languages-profiles.d directory not found at $PROFILES_DIR"
         return 1
     fi
 
@@ -266,7 +266,7 @@ main() {
                 list_profiles
             elif [ -z "$subcommand" ]; then
                 echo "Error: Profile name required"
-                echo "Use 'glp profile list' or 'glp profile PROFILE_NAME'"
+                echo "Use 'green-languages-profiles profile list' or 'green-languages-profiles profile PROFILE_NAME'"
                 exit 1
             else
                 enable_profile "$subcommand"
