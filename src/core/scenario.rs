@@ -151,7 +151,7 @@ impl Scenario {
                 vec![executable.to_string_lossy().to_string()]
             }
             Language::Java => {
-                let cp_flags = format!("{}/*:{}", lib_dir_str(), test_dir);
+                let cp_flags = format!("{}:{}", lib_dir_str(), test_dir);
                 vec![
                     "java".to_string(),
                     "--enable-native-access=ALL-UNNAMED".to_string(),
@@ -289,7 +289,7 @@ impl Scenario {
                 "-lmeasurements".to_string(),
             ],
             Language::Java => {
-                let cp_flags = format!("{}/*:{}", lib_dir_str(), test_dir);
+                let cp_flags = format!("{}:{}", lib_dir_str(), test_dir);
                 vec![
                     "javac".to_string(),
                     source,
