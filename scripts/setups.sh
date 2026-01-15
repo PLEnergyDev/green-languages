@@ -2,7 +2,7 @@
 
 set -e
 
-PROFILES_DIR="$GL_LIB_DIR/profiles/"
+SETUPS_DIR="$GL_LIB_DIR/setups"
 
 check_tlp() {
     if ! command -v tlp &> /dev/null; then
@@ -13,11 +13,11 @@ check_tlp() {
 
 show_usage() {
     cat << EOF
-Usage: green-languages-profiles [COMMAND] [SUBCOMMAND] [OPTIONS]
+Usage: green-languages-setups [COMMAND] [SUBCOMMAND] [OPTIONS]
 
-Profile Management:
-  profile list       List all available TLP profiles
-  profile PROFILE    Enable a TLP profile (restarts TLP)
+Setup Management:
+  setup list         List all available TLP setups
+  setup SETUP        Enable a TLP setup (restarts TLP)
 
 CPU Management:
   cpu disable [PCT]  Disable PCT% of CPUs (default: 100%)
@@ -36,69 +36,69 @@ General:
   help               Show this help message
 
 Examples:
-  green-languages-profiles profile list
-  green-languages-profiles profile powersave
-  green-languages-profiles cpu disable 50
-  green-languages-profiles cpu disable
-  green-languages-profiles cpu enable
-  green-languages-profiles cpu disable ht
-  green-languages-profiles cpu enable cs
-  green-languages-profiles aslr disable
-  green-languages-profiles cache drop
-  green-languages-profiles cache drop 1
+  green-languages-setups setup list
+  green-languages-setups setup powersave
+  green-languages-setups cpu disable 50
+  green-languages-setups cpu disable
+  green-languages-setups cpu enable
+  green-languages-setups cpu disable ht
+  green-languages-setups cpu enable cs
+  green-languages-setups aslr disable
+  green-languages-setups cache drop
+  green-languages-setups cache drop 1
 
 Cache Levels:
   1 = Free pagecache only
   2 = Free dentries and inodes only
   3 = Free pagecache, dentries and inodes (default)
 
-Profiles are stored in: ${PROFILES_DIR}/
+Setups are stored in: ${SETUPS_DIR}
 
 EOF
 }
 
-list_profiles() {
-    if [ ! -d "$PROFILES_DIR" ]; then
-        echo "Error: green-languages-profiles.d directory not found at $PROFILES_DIR"
+list_setups() {
+    if [ ! -d "$SETUPS_DIR" ]; then
+        echo "Error: green-languages-setups.d directory not found at $SETUPS_DIR"
         return 1
     fi
 
-    local profiles=($(find "$PROFILES_DIR" -maxdepth 1 -name "*.conf" -type f -printf '%f\n' | sed 's/\.conf$//'))
+    local setups=($(find "$SETUPS_DIR" -maxdepth 1 -name "*.conf" -type f -printf '%f\n' | sed 's/\.conf$//'))
 
-    if [ ${#profiles[@]} -eq 0 ]; then
-        echo "No profiles found in $PROFILES_DIR"
+    if [ ${#setups[@]} -eq 0 ]; then
+        echo "No setups found in $SETUPS_DIR"
         return 1
     fi
 
-    echo "Available profiles:"
-    for profile in "${profiles[@]}"; do
-        echo "  - $profile"
+    echo "Available setups:"
+    for setup in "${setups[@]}"; do
+        echo "  - $setup"
     done
 }
 
-enable_profile() {
-    local profile=$1
+enable_setup() {
+    local setup=$1
 
-    if [ -z "$profile" ]; then
-        echo "Error: Profile name required"
+    if [ -z "$setup" ]; then
+        echo "Error: Setup name required"
         return 1
     fi
 
-    local profile_file="$PROFILES_DIR/$profile.conf"
+    local setup_file="$SETUPS_DIR/$setup.conf"
 
-    if [ ! -f "$profile_file" ]; then
-        echo "Error: Profile '$profile' not found at $profile_file"
+    if [ ! -f "$setup_file" ]; then
+        echo "Error: Setup '$setup' not found at $setup_file"
         return 1
     fi
 
-    echo "Enabling profile: $profile"
+    echo "Enabling setup: $setup"
 
     sudo rm -f /etc/tlp.d/*.conf
 
-    sudo cp "$profile_file" "/etc/tlp.d/$profile.conf"
+    sudo cp "$setup_file" "/etc/tlp.d/$setup.conf"
     sudo tlp start
 
-    echo "Profile '$profile' enabled and TLP restarted"
+    echo "Setup '$setup' enabled and TLP restarted"
 }
 
 disable_cpus() {
@@ -260,16 +260,16 @@ main() {
     local arg3=$3
 
     case "$command" in
-        profile)
+        setup)
             check_tlp || return 1
             if [ "$subcommand" = "list" ]; then
-                list_profiles
+                list_setups
             elif [ -z "$subcommand" ]; then
-                echo "Error: Profile name required"
-                echo "Use 'green-languages-profiles profile list' or 'green-languages-profiles profile PROFILE_NAME'"
+                echo "Error: Setup name required"
+                echo "Use 'green-languages-setups setup list' or 'green-languages-setups setup PROFILE_NAME'"
                 exit 1
             else
-                enable_profile "$subcommand"
+                enable_setup "$subcommand"
             fi
             ;;
         cpu)
