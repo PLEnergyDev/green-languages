@@ -33,6 +33,10 @@ pub fn results_dir() -> PathBuf {
     PathBuf::from(".").join("results")
 }
 
+pub fn java_cp() -> String {
+    std::env::var("CLASSPATH").unwrap_or_default()
+}
+
 pub fn deserialize_args<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
 where
     D: Deserializer<'de>,

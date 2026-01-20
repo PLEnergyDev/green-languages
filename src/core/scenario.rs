@@ -1,4 +1,4 @@
-use super::util::{lib_dir_str, results_dir, CommandEnvExt};
+use super::util::{lib_dir_str, results_dir, java_cp, CommandEnvExt};
 use super::{Language, Scenario, ScenarioError, ScenarioResult, Test};
 use nix::sched::{sched_setaffinity, CpuSet};
 use nix::unistd::Pid;
@@ -151,7 +151,7 @@ impl Scenario {
                 vec![executable.to_string_lossy().to_string()]
             }
             Language::Java => {
-                let cp_flags = format!("{}:{}", lib_dir_str(), test_dir);
+                let cp_flags = format!("{}:{}:{}", lib_dir_str(), test_dir, java_cp());
                 vec![
                     "java".to_string(),
                     "--enable-native-access=ALL-UNNAMED".to_string(),
@@ -289,7 +289,7 @@ impl Scenario {
                 "-lmeasurements".to_string(),
             ],
             Language::Java => {
-                let cp_flags = format!("{}:{}", lib_dir_str(), test_dir);
+                let cp_flags = format!("{}:{}:{}", lib_dir_str(), test_dir, java_cp());
                 vec![
                     "javac".to_string(),
                     source,
