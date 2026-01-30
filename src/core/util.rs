@@ -1,4 +1,3 @@
-use crate::config::Config;
 use base64::Engine;
 use serde::{de, Deserialize, Deserializer, Serializer};
 use serde_yml::Value;
@@ -6,12 +5,14 @@ use std::env;
 use std::path::PathBuf;
 use std::process::Command;
 
+const GL_LIB_DIR: &str = env!("GL_LIB_DIR");
+
 pub trait CommandEnvExt {
-    fn with_measurements_env(&mut self) -> &mut Self;
+    fn with_signals_env(&mut self) -> &mut Self;
 }
 
 impl CommandEnvExt for Command {
-    fn with_measurements_env(&mut self) -> &mut Self {
+    fn with_signals_env(&mut self) -> &mut Self {
         let lib_dir = lib_dir_str();
         let append_lib_dir = |var_name: &str| {
             env::var(var_name)
@@ -25,12 +26,18 @@ impl CommandEnvExt for Command {
     }
 }
 
-pub fn lib_dir_str() -> String {
-    Config::global().lib_dir.to_string_lossy().to_string()
+pub fn lib_dir() -> PathBuf {
+    env::var_os("GL_LIB_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(GL_LIB_DIR))
 }
 
-pub fn results_dir() -> PathBuf {
-    PathBuf::from(".").join("results")
+pub fn lib_dir_str() -> String {
+    lib_dir().to_string_lossy().into_owned()
+}
+
+pub fn measurements_dir() -> PathBuf {
+    PathBuf::from(".").join("measurements")
 }
 
 pub fn java_cp() -> String {

@@ -30,6 +30,7 @@ pub struct Dependency {
 }
 
 #[derive(Display, Debug, Clone, Copy, Deserialize, Serialize)]
+#[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum MeasurementMode {
     Internal,
@@ -49,7 +50,7 @@ pub struct Scenario {
     pub dependencies: Option<Vec<Dependency>>,
     pub affinity: Option<Vec<usize>>,
     pub niceness: Option<i32>,
-    pub measurement_mode: Option<MeasurementMode>,
+    pub mode: Option<MeasurementMode>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub arguments: Option<Vec<String>>,
     #[serde(
@@ -99,7 +100,7 @@ pub enum ScenarioResult {
 #[derive(Default, Deserialize, Serialize)]
 pub struct Test {
     pub name: Option<String>,
-    pub measurement_mode: Option<MeasurementMode>,
+    pub mode: Option<MeasurementMode>,
     pub compile_options: Option<Vec<String>>,
     pub runtime_options: Option<Vec<String>>,
     pub dependencies: Option<Vec<Dependency>>,

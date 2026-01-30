@@ -35,9 +35,11 @@ pub fn set_iterations(iterations: usize) -> std::io::Result<()> {
     let status_read_fd = status_pipe[0];
     let status_write_fd = status_pipe[1];
 
-    std::env::set_var("GL_CONTROL_FD", control_read_fd.to_string());
-    std::env::set_var("GL_STATUS_FD", status_write_fd.to_string());
-    std::env::set_var("GL_ITERATIONS", iterations.to_string());
+    unsafe {
+        std::env::set_var("GL_CONTROL_FD", control_read_fd.to_string());
+        std::env::set_var("GL_STATUS_FD", status_write_fd.to_string());
+        std::env::set_var("GL_ITERATIONS", iterations.to_string());
+    }
 
     *PARENT_STATE.lock().unwrap() = Some(ParentState {
         control_write_fd,
@@ -101,14 +103,15 @@ pub fn cleanup_pipes() {
         }
     }
 
-    std::env::remove_var("GL_CONTROL_FD");
-    std::env::remove_var("GL_STATUS_FD");
-    std::env::remove_var("GL_ITERATIONS");
+    unsafe {
+        std::env::remove_var("GL_CONTROL_FD");
+        std::env::remove_var("GL_STATUS_FD");
+        std::env::remove_var("GL_ITERATIONS");
+    }
 }
 
 fn initialize_child() -> Option<ChildState> {
     let control_fd = std::env::var("GL_CONTROL_FD").ok()?.parse::<RawFd>().ok()?;
-
     let status_fd = std::env::var("GL_STATUS_FD").ok()?.parse::<RawFd>().ok()?;
 
     Some(ChildState {
@@ -117,7 +120,7 @@ fn initialize_child() -> Option<ChildState> {
     })
 }
 
-pub fn start_measurement() -> i32 {
+pub fn start_gl() -> i32 {
     let mut state_guard = CHILD_STATE.lock().unwrap();
 
     if state_guard.is_none() {
@@ -160,7 +163,7 @@ pub fn start_measurement() -> i32 {
     1
 }
 
-pub fn end_measurement() {
+pub fn end_gl() {
     let mut state_guard = CHILD_STATE.lock().unwrap();
 
     let state = match state_guard.as_mut() {

@@ -1,9 +1,9 @@
-use crate::core::util::results_dir;
+use crate::core::util::measurements_dir;
 use crate::core::{MeasurementMode, Scenario, ScenarioResult, Test};
 use crate::{MeasureCommand, Measurement};
 use csv::WriterBuilder;
 use log::{error, info, warn};
-use measurements::signal;
+use signals::signal;
 use perf_event::events::{Cache, CacheId, CacheOp, CacheResult, Dynamic, Hardware, Software};
 use perf_event::{Builder, Counter, Group};
 use perf_event_data::ReadFormat;
@@ -102,12 +102,12 @@ impl Bundle for TimeBundle {
     }
 
     fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
-        let mut results = HashMap::new();
+        let mut measurements = HashMap::new();
         if let Some(start) = self.start_time {
             let elapsed_micros = start.elapsed().as_micros() as u64;
-            results.insert("time".to_string(), elapsed_micros.to_string());
+            measurements.insert("time".to_string(), elapsed_micros.to_string());
         }
-        Ok(results)
+        Ok(measurements)
     }
 }
 
@@ -168,13 +168,13 @@ impl Bundle for RaplBundle {
     }
 
     fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
-        let mut results = HashMap::new();
+        let mut measurements = HashMap::new();
         for (name, rapl_counter) in &mut self.counters {
             let raw = rapl_counter.counter.read()?;
             let scaled = raw as f64 * rapl_counter.scale;
-            results.insert(name.to_string(), format!("{:.3}", scaled));
+            measurements.insert(name.to_string(), format!("{:.3}", scaled));
         }
-        Ok(results)
+        Ok(measurements)
     }
 }
 
@@ -287,17 +287,17 @@ impl Bundle for MissesBundle {
     }
 
     fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
-        let mut results = HashMap::new();
+        let mut measurements = HashMap::new();
 
         for (name, cpu_counters) in &mut self.counters {
             let mut total: u64 = 0;
             for counter in cpu_counters {
                 total += counter.read()?;
             }
-            results.insert(name.to_string(), total.to_string());
+            measurements.insert(name.to_string(), total.to_string());
         }
 
-        Ok(results)
+        Ok(measurements)
     }
 }
 
@@ -409,11 +409,11 @@ impl Bundle for CStateBundle {
             *aggregated.entry(event_name).or_insert(0) += value;
         }
 
-        let mut results = HashMap::new();
+        let mut measurements = HashMap::new();
         for (name, value) in aggregated {
-            results.insert(name, value.to_string());
+            measurements.insert(name, value.to_string());
         }
-        Ok(results)
+        Ok(measurements)
     }
 }
 
@@ -464,26 +464,27 @@ impl Bundle for CyclesBundle {
     }
 
     fn read(&mut self) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
-        let mut results = HashMap::new();
+        let mut measurements = HashMap::new();
 
         let mut total_cycles: u64 = 0;
         for counter in &mut self.counters {
             total_cycles += counter.read()?;
         }
 
-        results.insert("cycles".to_string(), total_cycles.to_string());
-        Ok(results)
+        measurements.insert("cycles".to_string(), total_cycles.to_string());
+        Ok(measurements)
     }
 }
 
 impl Measurement {
-    fn write_to_csv(&self, output_path: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-        let file_exists = output_path.exists();
+    fn write_to_csv(&self, output_dir: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+        let csv_path = output_dir.join("measurements.csv");
+        let file_exists = csv_path.exists();
         let file = OpenOptions::new()
             .write(true)
             .create(true)
             .append(true)
-            .open(output_path)?;
+            .open(csv_path)?;
         let mut wtr = WriterBuilder::new()
             .has_headers(!file_exists)
             .from_writer(file);
@@ -541,9 +542,7 @@ impl Measurement {
 }
 
 impl MeasureCommand {
-    pub fn handle() -> Result<(), Box<dyn std::error::Error>> {
-        let args = <Self as clap::Parser>::parse();
-
+    pub fn handle(args: Self) -> Result<(), Box<dyn std::error::Error>> {
         let bundle_config = BundleConfig {
             rapl: args.rapl,
             misses: args.misses,
@@ -551,26 +550,20 @@ impl MeasureCommand {
             cycles: args.cycles,
         };
 
+        let output_dir = args.output.clone().unwrap_or_else(measurements_dir);
+        std::fs::create_dir_all(&output_dir)?;
+
         for scenario_path_str in &args.scenarios {
             let scenario_path = scenario_path_str.as_path();
             let mut scenario = Scenario::try_from(scenario_path)?;
             let tests = Test::iterate_from_file(scenario_path)?.peekable();
             let iterations: usize = args.iterations.into();
-            let scenario_dir = scenario.scenario_dir();
             let mut has_tests = false;
 
+            let scenario_dir = scenario.scenario_dir(&output_dir);
             if scenario_dir.exists() {
                 fs::remove_dir_all(&scenario_dir)?;
             }
-
-            let output_path = if let Some(ref user_path) = args.output {
-                if let Some(parent) = user_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                user_path.clone()
-            } else {
-                results_dir().join("results.csv")
-            };
 
             for (index, test_result) in tests.enumerate() {
                 has_tests = true;
@@ -587,7 +580,7 @@ impl MeasureCommand {
                     0,
                     iterations,
                     args.sleep,
-                    &output_path,
+                    &output_dir,
                 ) {
                     error!("{}", err);
                 }
@@ -604,7 +597,7 @@ impl MeasureCommand {
                     0,
                     iterations,
                     args.sleep,
-                    &output_path,
+                    &output_dir,
                 ) {
                     error!("{}", err);
                 }
@@ -617,35 +610,23 @@ impl MeasureCommand {
     fn verify_iteration(
         scenario: &mut Scenario,
         test: &Test,
-        iteration: usize,
         verify_iterations: usize,
-        context: &str,
+        output_dir: &PathBuf,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let test_expected_stdout_path = scenario.test_expected_stdout_path(test);
-        let scenario_expected_stdout_path = scenario.scenario_expected_stdout_path();
+        let test_expected_stdout_path = scenario.test_expected_stdout_path(test, output_dir);
+        let scenario_expected_stdout_path = scenario.scenario_expected_stdout_path(output_dir);
 
         if !test_expected_stdout_path.exists() && !scenario_expected_stdout_path.exists() {
             return Ok(());
         }
 
-        match scenario.verify_test(&test, verify_iterations) {
+        match scenario.verify_test(&test, verify_iterations, output_dir) {
             Ok(ScenarioResult::Success { out, err }) => {
-                info!("{} Iteration {} success", context, iteration);
                 if !out.trim().is_empty() {
-                    info!(
-                        "{} Iteration {} output:\n{}",
-                        context,
-                        iteration,
-                        out.trim()
-                    );
+                    info!("    Verification output:\n{}", out.trim());
                 }
                 if !err.trim().is_empty() {
-                    info!(
-                        "{} Iteration {} stderr:\n{}",
-                        context,
-                        iteration,
-                        err.trim()
-                    );
+                    info!("    Verification stderr:\n{}", err.trim());
                 }
                 Ok(())
             }
@@ -655,24 +636,14 @@ impl MeasureCommand {
                 err,
             }) => {
                 if !err.trim().is_empty() {
-                    error!(
-                        "{} Iteration {} failure details:\n{}",
-                        context,
-                        iteration,
-                        err.trim()
-                    );
+                    error!("    Verification failed:\n{}", err.trim());
                 }
                 if !out.trim().is_empty() {
-                    error!(
-                        "{} Iteration {} failure details:\n{}",
-                        context,
-                        iteration,
-                        out.trim()
-                    );
+                    error!("    Verification output:\n{}", out.trim());
                 }
-                Err(format!("Iteration {} failed exit code {}", iteration, exit_code).into())
+                Err(format!("Verification failed with exit code {}", exit_code).into())
             }
-            Err(err) => Err(format!("{} Iteration error: {}", context, err).into()),
+            Err(err) => Err(format!("Verification error: {}", err).into()),
         }
     }
 
@@ -683,29 +654,36 @@ impl MeasureCommand {
         iter_index: usize,
         iterations: usize,
         sleep: u8,
-        output_path: &PathBuf,
+        output_dir: &PathBuf,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let test_name = test.name.as_ref().unwrap();
-        let measurement_mode = test
-            .measurement_mode
-            .or(scenario.measurement_mode)
+        let mode = test.mode
+            .or(scenario.mode)
             .unwrap_or(MeasurementMode::Process);
-        let context = format!(
-            "[{}/{}/{}/{}]",
-            scenario.language, scenario.name, test_name, measurement_mode
-        );
         let affinity = test.affinity.clone().or(scenario.affinity.clone());
         let niceness = test.niceness.or(scenario.niceness);
+        let affinity_str = affinity
+            .as_ref()
+            .map(|a| a.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","))
+            .unwrap_or_else(|| "-".to_string());
+        let niceness_str = niceness
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let context = format!(
+            "[{} | {} | {} | {} | {}@{}]",
+            scenario.language, scenario.name, test_name, mode, niceness_str, affinity_str
+        );
 
-        info!("{} Build started", context);
-        match scenario.build_test(&mut test, iter_index) {
+        info!("{}", context);
+        info!("  Build started");
+        match scenario.build_test(&mut test, iter_index, output_dir) {
             Ok(ScenarioResult::Success { out, err }) => {
-                info!("{} Build success", context);
+                info!("  Build success");
                 if !out.trim().is_empty() {
-                    info!("{} Build output:\n{}", context, out.trim());
+                    info!("  Build output:\n{}", out.trim());
                 }
                 if !err.trim().is_empty() {
-                    warn!("{} Build stderr (warnings):\n{}", context, err.trim());
+                    warn!("  Build warnings:\n{}", err.trim());
                 }
             }
             Ok(ScenarioResult::Failed {
@@ -714,10 +692,10 @@ impl MeasureCommand {
                 err,
             }) => {
                 if !err.trim().is_empty() {
-                    error!("{} Build stderr:\n{}", context, err.trim());
+                    error!("  Build stderr:\n{}", err.trim());
                 }
                 if !out.trim().is_empty() {
-                    error!("{} Build stdout:\n{}", context, out.trim());
+                    error!("  Build stdout:\n{}", out.trim());
                 }
                 return Err(format!("Build failed with exit code {}", exit_code).into());
             }
@@ -728,8 +706,8 @@ impl MeasureCommand {
 
         let mut bundles = bundle_config.create_bundles(&affinity)?;
 
-        info!("{} Test started", context);
-        match measurement_mode {
+        info!("  Test started ({} iterations)", iterations);
+        match mode {
             MeasurementMode::Internal => Self::measure_internal(
                 scenario,
                 &test,
@@ -737,8 +715,7 @@ impl MeasureCommand {
                 sleep,
                 &affinity,
                 niceness,
-                &context,
-                output_path,
+                output_dir,
                 &mut bundles,
             )?,
             MeasurementMode::External => Self::measure_external(
@@ -748,8 +725,7 @@ impl MeasureCommand {
                 sleep,
                 &affinity,
                 niceness,
-                &context,
-                output_path,
+                output_dir,
                 &mut bundles,
             )?,
             MeasurementMode::Process => Self::measure_process(
@@ -759,39 +735,38 @@ impl MeasureCommand {
                 sleep,
                 &affinity,
                 niceness,
-                &context,
-                output_path,
+                output_dir,
                 &mut bundles,
             )?,
         };
-        info!("{} Test success", context);
+        info!("  Test completed");
 
         Ok(())
     }
 
     fn reset_and_enable_bundles(
         bundles: &mut Vec<Box<dyn Bundle>>,
-        context: &str,
+        stage: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         for bundle in bundles.iter_mut() {
             bundle
                 .reset()
-                .map_err(|e| format!("{} Failed to reset event counters: {}", context, e))?;
+                .map_err(|e| format!("Failed to reset counters during {}: {}", stage, e))?;
             bundle
                 .enable()
-                .map_err(|e| format!("{} Failed to enable event counters: {}", context, e))?;
+                .map_err(|e| format!("Failed to enable counters during {}: {}", stage, e))?;
         }
         Ok(())
     }
 
     fn disable_bundles(
         bundles: &mut Vec<Box<dyn Bundle>>,
-        context: &str,
+        stage: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         for bundle in bundles.iter_mut() {
             bundle
                 .disable()
-                .map_err(|e| format!("{} Failed to disable event counters: {}", context, e))?;
+                .map_err(|e| format!("Failed to disable counters during {}: {}", stage, e))?;
         }
         Ok(())
     }
@@ -799,12 +774,12 @@ impl MeasureCommand {
     fn populate_measurement(
         measurement: &mut Measurement,
         bundles: &mut Vec<Box<dyn Bundle>>,
-        context: &str,
+        stage: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         for bundle in bundles.iter_mut() {
             let data = bundle
                 .read()
-                .map_err(|e| format!("{} Failed to read bundle: {}", context, e))?;
+                .map_err(|e| format!("Failed to read bundle during {}: {}", stage, e))?;
 
             for (key, value) in data {
                 match key.as_str() {
@@ -845,18 +820,18 @@ impl MeasureCommand {
         Ok(())
     }
 
-    fn validate_output(output: &Output, context: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn validate_output(output: &Output) -> Result<(), Box<dyn std::error::Error>> {
         if !output.status.success() {
             let exit_code = output.status.code().unwrap_or(-1);
             let stderr = String::from_utf8_lossy(&output.stderr);
             if !stderr.trim().is_empty() {
-                error!("{} Exec stderr:\n{}", context, stderr.trim());
+                error!("    Execution stderr:\n{}", stderr.trim());
             }
-            return Err(format!("Exec failed with exit code {}", exit_code).into());
+            return Err(format!("Execution failed with exit code {}", exit_code).into());
         }
         let stderr = String::from_utf8_lossy(&output.stderr);
         if !stderr.trim().is_empty() {
-            warn!("{} Exec stderr (warnings):\n{}", context, stderr.trim());
+            warn!("    Execution warnings:\n{}", stderr.trim());
         }
         Ok(())
     }
@@ -868,29 +843,28 @@ impl MeasureCommand {
         sleep: u8,
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
-        context: &str,
-        output_path: &PathBuf,
+        output_dir: &PathBuf,
         bundles: &mut Vec<Box<dyn Bundle>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         signal::set_iterations(iterations)?;
 
-        let mut command = scenario.exec_command(test, affinity, niceness)?;
+        let mut command = scenario.exec_command(test, output_dir, affinity, niceness)?;
         let child = command.spawn()?;
 
         for i in 1..=iterations {
             if sleep > 0 {
-                info!("{} Sleeping for {}", context, sleep);
+                info!("    Sleeping {} seconds", sleep);
                 std::thread::sleep(std::time::Duration::from_secs(sleep as u64));
             }
-            info!("{} Iteration {} started", context, i);
+            info!("    Iteration {}/{} started", i, iterations);
 
             signal::wait_for_start();
 
-            Self::reset_and_enable_bundles(bundles, context)?;
+            Self::reset_and_enable_bundles(bundles, "iteration")?;
 
             signal::wait_for_end();
 
-            Self::disable_bundles(bundles, context)?;
+            Self::disable_bundles(bundles, "iteration")?;
 
             let mut measurement = Measurement::new(
                 scenario,
@@ -901,17 +875,18 @@ impl MeasureCommand {
                 niceness,
             );
 
-            Self::populate_measurement(&mut measurement, bundles, context)?;
+            Self::populate_measurement(&mut measurement, bundles, "iteration")?;
 
-            measurement.write_to_csv(output_path)?;
+            measurement.write_to_csv(output_dir)?;
+            info!("    Iteration {}/{} completed", i, iterations);
         }
 
         signal::cleanup_pipes();
 
         let output = child.wait_with_output()?;
 
-        Self::validate_output(&output, context)?;
-        Self::verify_iteration(scenario, test, iterations, iterations, context)?;
+        Self::validate_output(&output)?;
+        Self::verify_iteration(scenario, test, iterations, output_dir)?;
 
         Ok(())
     }
@@ -923,36 +898,35 @@ impl MeasureCommand {
         sleep: u8,
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
-        context: &str,
-        output_path: &PathBuf,
+        output_dir: &PathBuf,
         bundles: &mut Vec<Box<dyn Bundle>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         for i in 1..=iterations {
-            let mut command = scenario.exec_command(test, affinity, niceness)?;
+            let mut command = scenario.exec_command(test, output_dir, affinity, niceness)?;
 
             signal::set_iterations(1)?;
 
             if sleep > 0 {
-                info!("{} Sleeping for {}", context, sleep);
+                info!("    Sleeping {} seconds", sleep);
                 std::thread::sleep(std::time::Duration::from_secs(sleep as u64));
             }
-            info!("{} Iteration {} started", context, i);
+            info!("    Iteration {}/{} started", i, iterations);
 
             let child = command.spawn()?;
 
             signal::wait_for_start();
 
-            Self::reset_and_enable_bundles(bundles, context)?;
+            Self::reset_and_enable_bundles(bundles, "iteration")?;
 
             signal::wait_for_end();
 
-            Self::disable_bundles(bundles, context)?;
+            Self::disable_bundles(bundles, "iteration")?;
 
             signal::cleanup_pipes();
 
             let output = child.wait_with_output()?;
 
-            Self::validate_output(&output, context)?;
+            Self::validate_output(&output)?;
 
             let mut measurement = Measurement::new(
                 scenario,
@@ -963,11 +937,12 @@ impl MeasureCommand {
                 niceness,
             );
 
-            Self::populate_measurement(&mut measurement, bundles, context)?;
+            Self::populate_measurement(&mut measurement, bundles, "iteration")?;
 
-            measurement.write_to_csv(output_path)?;
+            measurement.write_to_csv(output_dir)?;
 
-            Self::verify_iteration(scenario, test, i, 1, context)?;
+            Self::verify_iteration(scenario, test, 1, output_dir)?;
+            info!("    Iteration {}/{} completed", i, iterations);
         }
 
         Ok(())
@@ -980,26 +955,26 @@ impl MeasureCommand {
         sleep: u8,
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
-        context: &str,
-        output_path: &PathBuf,
+        output_dir: &PathBuf,
         bundles: &mut Vec<Box<dyn Bundle>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         for i in 1..=iterations {
-            let mut command = scenario.exec_command(test, affinity, niceness)?;
+            let mut command = scenario.exec_command(test, output_dir, affinity, niceness)?;
 
             if sleep > 0 {
-                info!("{} Sleeping for {}", context, sleep);
+                info!("    Sleeping {} seconds", sleep);
                 std::thread::sleep(std::time::Duration::from_secs(sleep as u64));
             }
-            info!("{} Iteration {} started", context, i);
+            info!("    Iteration {}/{} started", i, iterations);
 
-            Self::reset_and_enable_bundles(bundles, context)?;
+            Self::reset_and_enable_bundles(bundles, "iteration")?;
 
             let child = command.spawn()?;
             let output = child.wait_with_output()?;
 
-            Self::disable_bundles(bundles, context)?;
-            Self::validate_output(&output, context)?;
+            Self::disable_bundles(bundles, "iteration")?;
+
+            Self::validate_output(&output)?;
 
             let mut measurement = Measurement::new(
                 scenario,
@@ -1010,11 +985,12 @@ impl MeasureCommand {
                 niceness,
             );
 
-            Self::populate_measurement(&mut measurement, bundles, context)?;
+            Self::populate_measurement(&mut measurement, bundles, "iteration")?;
 
-            measurement.write_to_csv(output_path)?;
+            measurement.write_to_csv(output_dir)?;
 
-            Self::verify_iteration(scenario, test, i, 1, context)?;
+            Self::verify_iteration(scenario, test, 1, output_dir)?;
+            info!("    Iteration {}/{} completed", i, iterations);
         }
 
         Ok(())

@@ -1,4 +1,4 @@
-use super::util::{lib_dir_str, results_dir, java_cp, CommandEnvExt};
+use super::util::{lib_dir_str, java_cp, CommandEnvExt};
 use super::{Language, Scenario, ScenarioError, ScenarioResult, Test};
 use nix::sched::{sched_setaffinity, CpuSet};
 use nix::unistd::Pid;
@@ -74,49 +74,50 @@ impl TryFrom<&str> for Scenario {
 }
 
 impl Scenario {
-    pub fn scenario_dir(&self) -> PathBuf {
-        results_dir()
+    pub fn scenario_dir(&self, output_dir: &Path) -> PathBuf {
+        output_dir
             .join("build")
             .join(&self.language.to_string())
             .join(&self.name)
     }
 
-    fn test_dir(&self, test: &Test) -> PathBuf {
+    fn test_dir(&self, test: &Test, output_dir: &Path) -> PathBuf {
         let test_name = test.name.as_ref().expect("test has no name");
-        self.scenario_dir().join(test_name)
+        self.scenario_dir(output_dir).join(test_name)
     }
 
-    fn target_path(&self, test: &Test) -> PathBuf {
-        self.test_dir(&test).join(&self.language.target_file())
+    fn target_path(&self, test: &Test, output_dir: &Path) -> PathBuf {
+        self.test_dir(&test, output_dir).join(&self.language.target_file())
     }
 
-    fn source_path(&self) -> PathBuf {
-        self.scenario_dir().join(&self.language.source_file())
+    fn source_path(&self, output_dir: &Path) -> PathBuf {
+        self.scenario_dir(output_dir).join(&self.language.source_file())
     }
 
-    fn stdout_path(&self, test: &Test) -> PathBuf {
-        self.test_dir(test).join("stdout.txt")
+    fn stdout_path(&self, test: &Test, output_dir: &Path) -> PathBuf {
+        self.test_dir(test, output_dir).join("stdout.txt")
     }
 
-    pub fn test_expected_stdout_path(&self, test: &Test) -> PathBuf {
-        self.test_dir(test).join("expected_stdout.txt")
+    pub fn test_expected_stdout_path(&self, test: &Test, output_dir: &Path) -> PathBuf {
+        self.test_dir(test, output_dir).join("expected_stdout.txt")
     }
 
-    pub fn scenario_expected_stdout_path(&self) -> PathBuf {
-        self.scenario_dir().join("expected_stdout.txt")
+    pub fn scenario_expected_stdout_path(&self, output_dir: &Path) -> PathBuf {
+        self.scenario_dir(output_dir).join("expected_stdout.txt")
     }
 
-    fn test_stdin_path(&self, test: &Test) -> PathBuf {
-        self.test_dir(test).join("stdin.txt")
+    fn test_stdin_path(&self, test: &Test, output_dir: &Path) -> PathBuf {
+        self.test_dir(test, output_dir).join("stdin.txt")
     }
 
-    fn scenario_stdin_path(&self) -> PathBuf {
-        self.scenario_dir().join("stdin.txt")
+    fn scenario_stdin_path(&self, output_dir: &Path) -> PathBuf {
+        self.scenario_dir(output_dir).join("stdin.txt")
     }
 
     pub fn exec_command(
         &self,
         test: &Test,
+        output_dir: &Path,
         affinity: &Option<Vec<usize>>,
         niceness: Option<i32>,
     ) -> Result<Command, ScenarioError> {
@@ -135,13 +136,13 @@ impl Scenario {
             _ => {}
         }
 
-        let target = self.target_path(&test).to_string_lossy().to_string();
-        let test_dir = self.test_dir(&test).to_string_lossy().to_string();
+        let target = self.target_path(&test, output_dir).to_string_lossy().to_string();
+        let test_dir = self.test_dir(&test, output_dir).to_string_lossy().to_string();
 
         let mut command = match self.language {
             Language::C | Language::Cpp => vec![target],
             Language::Cs => {
-                let executable = self.test_dir(test).join("Program");
+                let executable = self.test_dir(test, output_dir).join("Program");
                 if !executable.exists() {
                     return Err(ScenarioError::Io(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
@@ -162,7 +163,7 @@ impl Scenario {
                 ]
             }
             Language::Rust => {
-                let test_dir = self.test_dir(test);
+                let test_dir = self.test_dir(test, output_dir);
                 let release_path = test_dir.join("release").join("program");
                 let debug_path = test_dir.join("debug").join("program");
                 let executable = if release_path.exists() {
@@ -199,11 +200,11 @@ impl Scenario {
             }
         }
 
-        let stdout_path = self.stdout_path(&test);
+        let stdout_path = self.stdout_path(&test, output_dir);
         let _ = std::fs::remove_file(&stdout_path);
         let stdout_file = File::create(&stdout_path)?;
-        let test_stdin_path = self.test_stdin_path(&test);
-        let scenario_stdin_path = self.scenario_stdin_path();
+        let test_stdin_path = self.test_stdin_path(&test, output_dir);
+        let scenario_stdin_path = self.scenario_stdin_path(output_dir);
         let test_stdin_config = if test_stdin_path.exists() {
             let stdin_file = File::open(&test_stdin_path)?;
             Stdio::from(stdin_file)
@@ -218,7 +219,7 @@ impl Scenario {
 
         let mut cmd = Command::new(&command[0]);
         cmd.args(&command[1..])
-            .with_measurements_env()
+            .with_signals_env()
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::piped())
             .stdin(test_stdin_config);
@@ -259,11 +260,11 @@ impl Scenario {
         Ok(cmd)
     }
 
-    pub fn build_command(&self, test: &Test) -> Vec<String> {
-        let scenario = self.scenario_dir().to_string_lossy().to_string();
-        let source = self.source_path().to_string_lossy().to_string();
-        let target = self.target_path(&test).to_string_lossy().to_string();
-        let test_dir = self.test_dir(&test).to_string_lossy().to_string();
+    pub fn build_command(&self, test: &Test, output_dir: &Path) -> Vec<String> {
+        let scenario = self.scenario_dir(output_dir).to_string_lossy().to_string();
+        let source = self.source_path(output_dir).to_string_lossy().to_string();
+        let target = self.target_path(&test, output_dir).to_string_lossy().to_string();
+        let test_dir = self.test_dir(&test, output_dir).to_string_lossy().to_string();
 
         match self.language {
             Language::C => vec![
@@ -271,7 +272,7 @@ impl Scenario {
                 source,
                 "-o".to_string(),
                 target,
-                "-lmeasurements".to_string(),
+                "-lsignals".to_string(),
             ],
             Language::Cs => vec![
                 "dotnet".to_string(),
@@ -286,7 +287,7 @@ impl Scenario {
                 source,
                 "-o".to_string(),
                 target,
-                "-lmeasurements".to_string(),
+                "-lsignals".to_string(),
             ],
             Language::Java => {
                 let cp_flags = format!("{}:{}:{}", lib_dir_str(), test_dir, java_cp());
@@ -301,7 +302,7 @@ impl Scenario {
             }
             Language::Rust => {
                 let toml_path = self
-                    .scenario_dir()
+                    .scenario_dir(output_dir)
                     .join("Cargo.toml")
                     .to_string_lossy()
                     .to_string();
@@ -322,14 +323,15 @@ impl Scenario {
         &mut self,
         test: &mut Test,
         index: usize,
+        output_dir: &Path,
     ) -> Result<ScenarioResult, ScenarioError> {
         let code = self.code.as_ref().ok_or(ScenarioError::MissingCode)?;
         if code.trim().is_empty() {
             return Err(ScenarioError::MissingCode);
         }
 
-        let source_path = self.source_path();
-        let test_dir = self.test_dir(&test);
+        let source_path = self.source_path(output_dir);
+        let test_dir = self.test_dir(&test, output_dir);
 
         fs::create_dir_all(&test_dir)?;
         fs::write(&source_path, code)?;
@@ -338,19 +340,19 @@ impl Scenario {
             test.name = Some(index.to_string());
         }
         if let Some(stdin_data) = self.stdin.take() {
-            fs::write(self.scenario_stdin_path(), stdin_data)?;
+            fs::write(self.scenario_stdin_path(output_dir), stdin_data)?;
         }
         if let Some(expected_stdout_data) = self.expected_stdout.take() {
-            fs::write(self.scenario_expected_stdout_path(), expected_stdout_data)?;
+            fs::write(self.scenario_expected_stdout_path(output_dir), expected_stdout_data)?;
         }
 
         match self.language {
-            Language::Cs => self.prepare_cs_build(&test)?,
-            Language::Rust => self.prepare_rust_build(&test)?,
+            Language::Cs => self.prepare_cs_build(&test, output_dir)?,
+            Language::Rust => self.prepare_rust_build(&test, output_dir)?,
             _ => (),
         }
 
-        let mut command = self.build_command(&test);
+        let mut command = self.build_command(&test, output_dir);
         let compile_opts = test
             .compile_options
             .as_ref()
@@ -363,7 +365,7 @@ impl Scenario {
 
         let output = Command::new(&command[0])
             .args(&command[1..])
-            .with_measurements_env()
+            .with_signals_env()
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()?;
@@ -373,10 +375,10 @@ impl Scenario {
 
         if output.status.success() {
             if let Some(stdin_data) = test.stdin.take() {
-                fs::write(self.test_stdin_path(&test), stdin_data)?;
+                fs::write(self.test_stdin_path(&test, output_dir), stdin_data)?;
             }
             if let Some(expected_stdout_data) = test.expected_stdout.take() {
-                fs::write(self.test_expected_stdout_path(&test), expected_stdout_data)?;
+                fs::write(self.test_expected_stdout_path(&test, output_dir), expected_stdout_data)?;
             }
             Ok(ScenarioResult::success_with(out, err))
         } else {
@@ -390,9 +392,10 @@ impl Scenario {
         &self,
         test: &Test,
         iterations: usize,
+        output_dir: &Path,
     ) -> Result<ScenarioResult, ScenarioError> {
-        let test_expected_stdout_path = self.test_expected_stdout_path(test);
-        let scenario_expected_stdout_path = self.scenario_expected_stdout_path();
+        let test_expected_stdout_path = self.test_expected_stdout_path(test, output_dir);
+        let scenario_expected_stdout_path = self.scenario_expected_stdout_path(output_dir);
 
         let expected_stdout_path = if test_expected_stdout_path.exists() {
             test_expected_stdout_path
@@ -404,7 +407,7 @@ impl Scenario {
 
         let expected = std::fs::read(&expected_stdout_path)?;
         let expected_len = expected.len();
-        let stdout_path = self.stdout_path(test);
+        let stdout_path = self.stdout_path(test, output_dir);
         let file = File::open(&stdout_path)?;
         let mut reader = BufReader::with_capacity(expected_len * 16, file);
         let mut buffer = vec![0u8; expected_len];
@@ -445,8 +448,8 @@ impl Scenario {
         }
     }
 
-    fn prepare_cs_build(&self, test: &Test) -> Result<(), ScenarioError> {
-        let csproj_path = self.scenario_dir().join("Program.csproj");
+    fn prepare_cs_build(&self, test: &Test, output_dir: &Path) -> Result<(), ScenarioError> {
+        let csproj_path = self.scenario_dir(output_dir).join("Program.csproj");
         let mut dep_formatted = String::new();
         let framework = self.framework.as_ref().ok_or_else(|| {
             ScenarioError::Io(std::io::Error::new(
@@ -481,8 +484,8 @@ impl Scenario {
         Ok(())
     }
 
-    fn prepare_rust_build(&self, test: &Test) -> Result<(), ScenarioError> {
-        let toml_path = self.scenario_dir().join("Cargo.toml");
+    fn prepare_rust_build(&self, test: &Test, output_dir: &Path) -> Result<(), ScenarioError> {
+        let toml_path = self.scenario_dir(output_dir).join("Cargo.toml");
         let mut dep_formatted = String::new();
 
         let deps = test.dependencies.as_ref().or(self.dependencies.as_ref());
