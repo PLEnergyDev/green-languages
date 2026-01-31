@@ -9,11 +9,11 @@ code: |
     using System.Runtime.InteropServices;
 
     public class Program {
-        [DllImport("libmeasurements", EntryPoint = "start_measurement")]
-        public static extern bool start_measurement();
+        [DllImport("libsignals", EntryPoint = "start_gl")]
+        public static extern bool start_gl();
 
-        [DllImport("libmeasurements", EntryPoint = "end_measurement")]
-        public static extern void end_measurement();
+        [DllImport("libsignals", EntryPoint = "end_gl")]
+        public static extern void end_gl();
 
         static void run_benchmark(string[] args) {
             int n = int.Parse(args[0]);
@@ -48,9 +48,9 @@ code: |
 
         public static void Main(string[] args) {
             while (true) {
-                if (!start_measurement()) break;
+                if (!start_gl()) break;
                 run_benchmark(args);
-                end_measurement();
+                end_gl();
             }
         }
     }
@@ -69,7 +69,7 @@ expected_stdout: !!binary |
     MTg0ODcxMDAK
 ---
 name: release
-measurement_mode: internal
+mode: internal
 ---
 name: release
-measurement_mode: external
+mode: external

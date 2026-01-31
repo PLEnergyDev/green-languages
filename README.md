@@ -1,25 +1,24 @@
 # green-languages
 
-`green-languages` is a CLI tool that measures energy consumption and other performance metrics of whole programs or individual lines of code across different programming languages. It provides start/end measurement markers to wrap code sections. These markers are also used to track the measurement count, allowing repeated measurements for the same code section within a loop to detect performance changes during program runtime.
+`green-languages` is a CLI tool that measures the energy use (in Joules) and other performance metrics of whole programs or individual code sections across different programming languages. It provides start/end markers to wrap the code sections you want to measure. These markers are also used to track a measurement iteration count, allowing repeated measurements for the same code section within a loop to detect performance changes during program runtime.
 
 ## Usage
 
-Provide a scenario and enable a performance metric to the `gl` CLI tool:
+Provide a scenario and enable a performance metric:
 
 ```sh
-green-languages fib.yml --rapl --cycles --misses --cstates -i5
+green-languages fibonacci.yml --rapl -i5
 ```
 
-Upon success, the `results` dir is created containing `results.csv`, `green-languages.log` and build artifacts. Contents of `results.csv`:
+If the program builds and runs successfully, the `measurements` dir is created, which contains `measurements.csv`, `measurements.log` and the build artifacts. Contents of `measurements.csv`:
 
 ```csv
-scenario,language,test,mode,iteration,time,pkg,cores,gpu,dram,psys,cycles,l1d_misses,l1i_misses,llc_misses,branch_misses,c1_core_residency,c3_core_residency,c6_core_residency,c7_core_residency,c2_pkg_residency,c3_pkg_residency,c6_pkg_residency,c8_pkg_residency,c10_pkg_residency,ended
-fibonacci,c,1,process,1,56288,1.087,0.793,0.0,,1.84,14850497,665,1613,27,342,731518242,,1614601814,876914016,0,0,0,0,0,1762346358725229
-fibonacci,c,1,process,2,57025,0.905,0.667,0.0,,1.581,16596192,268,1274,3,339,420737148,,1701854796,1236024600,0,0,0,0,0,1762346358786143
-fibonacci,c,1,process,3,58306,0.997,0.753,0.0,,1.692,9990690,280,1358,0,345,303858282,,1724073718,1367192966,0,0,0,0,0,1762346358848497
-fibonacci,c,1,process,4,56242,0.654,0.421,0.0,,1.266,9598776,268,1258,1,348,207767508,,1578030626,1575898272,0,0,0,0,0,1762346358909304
-fibonacci,c,1,process,5,53974,0.83,0.606,0.0,,1.456,12048084,277,1372,0,343,266517498,,1540066812,1350901600,0,0,0,0,0,1762346358967603
-
+scenario,language,test,mode,iteration,time,pkg,cores,gpu,dram,psys,ended
+fibonacci,c,1,process,1,56288,1.087,0.793,0.0,,1.84,1762346358725229
+fibonacci,c,1,process,2,57025,0.905,0.667,0.0,,1.581,1762346358786143
+fibonacci,c,1,process,3,58306,0.997,0.753,0.0,,1.692,1762346358848497
+fibonacci,c,1,process,4,56242,0.654,0.421,0.0,,1.266,1762346358909304
+fibonacci,c,1,process,5,53974,0.83,0.606,0.0,,1.456,1762346358967603
 ```
 
 ## Available Performance Metrics
@@ -34,7 +33,7 @@ fibonacci,c,1,process,5,53974,0.83,0.606,0.0,,1.456,12048084,277,1372,0,343,2665
 
 ## Scenarios
 
-A scenario is a **YML file** holding data to execute a program written in a programming language. A basic example of a scenario written in C is shown. Per default, it measures the performance metrics of the whole program.
+A scenario is a **YML file** holding data to execute a program written in a programming language. A basic example of a scenario written in C is shown. Per default, it measures the performance metrics of the whole process.
 
 ```yml
 name: fibonacci
@@ -54,14 +53,14 @@ code: |
     }
 ```
 
-To measure individual lines of code in C, use `start_measurement()` and `end_measurement()` from the `measurement.h` library and enable the `measurement_mode: external` flag.
+To measure a code segment in C, use `start_gl()` and `end_gl()` from the `signals.h` library and set `mode: external`.
 
 ```yml
 name: fibonacci
 language: c
 code: |
     #include <stdio.h>
-    #include <measurements.h>
+    #include <signals.h>
 
     int fib(int n) {
         if (n <= 1) return n;
@@ -69,24 +68,23 @@ code: |
     }
 
     int main() {
-        start_measurement();
+        start_gl();
         int result = fib(35);
-        end_measurement();
+        end_gl();
         printf("%d\n", result);
         return 0;
     }
-measurement_mode: external
-
+mode: external
 ```
 
-To measure individual lines of code in C multiple times, put the markers in an loop and enable the `measurement_mode: internal` flag. Then use `green-languages fib.yml --rapl -i10` with `-i, --iterations` and the iteration count. This will measure `printf("Hello, World!");` 10 times within the same process.
+To measure a code segment in C multiple times, put the markers in an loop and set `mode: internal`. Then use `green-languages fibonacci.yml --rapl -i10` with `-i, --iterations` and the iteration count. This will measure `printf("Hello, World!");` 10 times within the same process.
 
 ```yml
 name: fibonacci
 language: c
 code: |
     #include <stdio.h>
-    #include <measurements.h>
+    #include <signals.h>
 
     int fib(int n) {
         if (n <= 1) return n;
@@ -95,15 +93,14 @@ code: |
 
     int main() {
         while (1) {
-            if (start_measurement() == 0) break;
+            if (start_gl() == 0) break;
             int result = fib(35);
-            end_measurement();
+            end_gl();
             printf("%d\n", result);
         }
         return 0;
     }
-measurement_mode: internal
-
+mode: internal
 ```
 
 ## Supported Programming Languages
@@ -111,13 +108,13 @@ measurement_mode: internal
 ### C/C++
 
 ```c
-#include <measurements.h>
+#include <signals.h>
 
 int main() {
     while (1) {
-        if (start_measurement() == 0) break;
+        if (start_gl() == 0) break;
         // Code segment to measure
-        end_measurement();
+        end_gl();
     }
 }
 ```
@@ -126,12 +123,12 @@ int main() {
 
 ```java
 public static void main(final String[] args) throws Exception {
-    Measurements measurements = new Measurements();
+    Signals signals = new Signals();
 
     while (true) {
-        if (measurements.startMeasurement() == 0) break;
+        if (signals.startGl() == 0) break;
         // Code segment to measure
-        measurements.endMeasurement();
+        signals.endGl();
     }
 }
 ```
@@ -142,17 +139,17 @@ public static void main(final String[] args) throws Exception {
 using System.Runtime.InteropServices;
 
 class Program {
-    [DllImport("libmeasurements", EntryPoint = "start_measurement")]
-    private static extern bool start_measurement();
+    [DllImport("libsignals", EntryPoint = "start_gl")]
+    private static extern bool start_gl();
 
-    [DllImport("libmeasurements", EntryPoint = "end_measurement")]
-    private static extern void end_measurement();
+    [DllImport("libsignals", EntryPoint = "end_gl")]
+    private static extern void end_gl();
 
     public static void Main(string[] args) {
         while (true) {
-            if (!start_measurement()) break;
+            if (!start_gl()) break;
             // Code segment to measure
-            end_measurement();
+            end_gl();
         }
     }
 }
@@ -161,19 +158,19 @@ class Program {
 ### Rust
 
 ```rust
-// Add Rust implementation
+// Coming soon
 ```
 
 ### Ruby
 
 ```ruby
-# Add Ruby implementation
+# Coming soon
 ```
 
 ### Python
 
 ```python
-# Add Python implementation
+# Coming soon
 ```
 
 ## Tests
@@ -189,7 +186,7 @@ language: c
 code: |
     #include <stdio.h>
     #include <stdlib.h>
-    #include <measurements.h>
+    #include <signals.h>
 
     int fib(int n) {
         if (n <= 1) return n;
@@ -200,14 +197,14 @@ code: |
         int n = argc > 1 ? atoi(argv[1]) : 35;
         
         while (1) {
-            if (start_measurement() == 0) break;
+            if (start_gl() == 0) break;
             int result = fib(n);
-            end_measurement();
+            end_gl();
             printf("%d\n", result);
         }
         return 0;
     }
-measurement_mode: internal
+mode: internal
 compile_options: [-O3, -march=native]
 ---
 name: 30 O3
@@ -229,13 +226,13 @@ expected_stdout: !!binary |
 
 ## All Scenario Fields
 
-| Field            | Type    | Required | Description                                                                                                                                             
+| Field            | Type    | Required | Description                                                                                                                                              |
 | ---------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | name             | String  | Yes      | Scenario identifier used in output and logs                                                                                                              |
 | language         | String  | Yes      | Programming language: `c`, `cpp`, `cs`, `java`, `rust`, `python`,                                                                                        |
 | code             | String  | Yes      | Source code to compile and execute                                                                                                                       |
 | description      | String  | No       | Human-readable scenario description                                                                                                                      |
-| measurement_mode | String  | No       | Measurement strategy: `process` (default, entire program), `external` (single iteration within process), `internal` (multiple iterations within process) |
+| mode             | String  | No       | Measurement strategy: `process` (default, entire program), `external` (single iteration within process), `internal` (multiple iterations within process) |
 | compile_options  | List    | No       | Compiler flags for compiled languages. Test-level overrides scenario-level                                                                               |
 | runtime_options  | List    | No       | Runtime interpreter flags for non-compiled languages. Test-level overrides scenario-level                                                                |
 | arguments        | List    | No       | Program arguments. Test-level overrides scenario-level. Supports strings, numbers, booleans                                                              |
@@ -245,3 +242,4 @@ expected_stdout: !!binary |
 | niceness         | Integer | No       | Process priority (-20 highest, 19 lowest). Test-level overrides scenario-level                                                                           |
 | stdin            | Binary  | No       | Base64-encoded input piped to program. Test-level overrides scenario-level                                                                               |
 | expected_stdout  | Binary  | No       | Base64-encoded expected output for verification. Test-level overrides scenario-level                                                                     |
+

@@ -5,7 +5,7 @@ description: |
     Each cell within these two matrices will be initialized with the sum of their row and column indices.
     Multiply the two matrices and output the contents of the last cell.
 code: |
-    #[link(name = "measurements")]
+    #[link(name = "signals")]
     unsafe extern "C" {
         fn start_measurement() -> bool;
         fn end_measurement();

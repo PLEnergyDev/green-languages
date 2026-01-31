@@ -5,10 +5,10 @@ description: |
     For M = 20 the answer is n = 272400600 and the loop performs that many iterations.
     Each iteration involves a floating-point comparison, a floating-point division and a floating-point addition, as well as an integer increment.
 code: |
-    #[link(name = "measurements")]
+    #[link(name = "signals")]
     unsafe extern "C" {
-        fn start_measurement() -> bool;
-        fn end_measurement();
+        fn start_gl() -> bool;
+        fn end_gl();
     }
 
     fn run_benchmark(args: &[String]) {
@@ -29,13 +29,13 @@ code: |
         let args: Vec<String> = std::env::args().skip(1).collect();
         loop {
             unsafe {
-                if !start_measurement() {
+                if !start_gl() {
                     break;
                 }
             }
             run_benchmark(&args);
             unsafe {
-                end_measurement();
+                end_gl();
             }
         }
     }
@@ -45,7 +45,7 @@ expected_stdout: !!binary |
     MjcyNDAwNjAwCg==
 ---
 name: release
-measurement_mode: internal
+mode: internal
 ---
 name: release
-measurement_mode: external
+mode: external
