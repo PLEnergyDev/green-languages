@@ -190,15 +190,11 @@ impl MeasureCommand {
             .affinity
             .as_ref()
             .or(scenario.affinity.as_ref())
-            .map(|a| {
-                a.iter()
-                    .map(|n| n.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            });
+            .map(|a| a.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","));
         let niceness = test.niceness.or(scenario.niceness);
 
         let mut reader = csv::Reader::from_path(measurement_path)?;
+        let mut iteration = 1usize;
         for result in reader.deserialize::<RawMeasurement>() {
             let raw = result?;
             writer.serialize(crate::Measurement {
@@ -209,6 +205,7 @@ impl MeasureCommand {
                 affinity: affinity.clone(),
                 mode,
                 run,
+                iteration,
                 time: raw.time,
                 pkg: raw.pkg,
                 cores: raw.cores,
@@ -229,6 +226,7 @@ impl MeasureCommand {
                 c10_pkg_residency: raw.c10_pkg_residency,
                 ended: raw.ended,
             })?;
+            iteration += 1;
         }
 
         writer.flush()?;

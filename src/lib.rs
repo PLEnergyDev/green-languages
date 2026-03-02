@@ -50,6 +50,7 @@ pub struct Measurement {
     pub affinity: Option<String>,
     pub mode: MeasurementMode,
     pub run: usize,
+    pub iteration: usize,
     pub time: Option<u64>,
     pub pkg: Option<f64>,
     pub cores: Option<f64>,
