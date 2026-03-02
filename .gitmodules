@@ -1,0 +1,4 @@
+[submodule "libgreen"]
+    path = libgreen
+    url = https://github.com/PLEnergyDev/libgreen.git
+

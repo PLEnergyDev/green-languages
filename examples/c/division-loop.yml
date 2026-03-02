@@ -7,10 +7,9 @@ description: |
 code: |
     #include <stdio.h>
     #include <stdlib.h>
-    #include <singals.h>
+    #include <green.h>
 
-    void run_benchmark(int argc, char **argv) {
-        int m = atoi(argv[1]);
+    void run_benchmark(int m) {
         double sum = 0.0;
         int n = 0;
         while (sum < m) {
@@ -21,20 +20,37 @@ code: |
     }
 
     int main(int argc, char **argv) {
-        while (1) {
-            if (!start_gl()) break;
-            run_benchmark(argc, argv);
-            end_gl();
+        if (argc < 4) {
+            fprintf(stderr, "Usage: %s <m> <iterations> <metrics>\n", argv[0]);
+            return 1;
         }
+
+        int m = atoi(argv[1]);
+        int iterations = atoi(argv[2]);
+        const char *metrics = argv[3];
+
+        for (int i = 0; i < iterations; i++) {
+            void *context = measure_start(metrics);
+            run_benchmark(m);
+            measure_stop(context);
+        }
+
         return 0;
     }
-arguments: [20]
 compile_options: [-pipe, -O3, -march=native, -fomit-frame-pointer]
-expected_stdout: !!binary |
-    MjcyNDAwNjAwCg==
+expected_stdout: !!binary MjcyNDAwNjAwCg==
+metrics: [rapl, cstates, misses, cycles]
 ---
-name: O3
+name: optimized
 mode: internal
----
-name: O3
-mode: external
+arguments: [20]
+iterations: 5
+# ---
+# name: optimized
+# mode: process
+# arguments: [20]
+# iterations: 1
+# metrics: [rapl, cstates, misses, cycles]
+# runs: 5
+# cooldown: 1000 # 1000 ms = 1 s
+#

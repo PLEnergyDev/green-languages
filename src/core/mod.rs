@@ -34,7 +34,6 @@ pub struct Dependency {
 #[serde(rename_all = "lowercase")]
 pub enum MeasurementMode {
     Internal,
-    External,
     Process,
 }
 
@@ -44,13 +43,17 @@ pub struct Scenario {
     pub language: Language,
     pub description: Option<String>,
     pub code: Option<String>,
+    pub framework: Option<String>,
     pub compile_options: Option<Vec<String>>,
     pub runtime_options: Option<Vec<String>>,
-    pub framework: Option<String>,
     pub dependencies: Option<Vec<Dependency>>,
     pub affinity: Option<Vec<usize>>,
     pub niceness: Option<i32>,
     pub mode: Option<MeasurementMode>,
+    pub metrics: Option<Vec<String>>,
+    pub runs: Option<i32>,
+    pub iterations: Option<i32>,
+    pub cooldown: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub arguments: Option<Vec<String>>,
     #[serde(
@@ -97,13 +100,19 @@ pub enum ScenarioResult {
     },
 }
 
-#[derive(Default, Deserialize, Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct Test {
     pub name: Option<String>,
-    pub mode: Option<MeasurementMode>,
     pub compile_options: Option<Vec<String>>,
     pub runtime_options: Option<Vec<String>>,
     pub dependencies: Option<Vec<Dependency>>,
+    pub affinity: Option<Vec<usize>>,
+    pub niceness: Option<i32>,
+    pub mode: Option<MeasurementMode>,
+    pub metrics: Option<Vec<String>>,
+    pub runs: Option<i32>,
+    pub iterations: Option<i32>,
+    pub cooldown: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub arguments: Option<Vec<String>>,
     #[serde(
@@ -120,8 +129,6 @@ pub struct Test {
         serialize_with = "to_base64"
     )]
     pub expected_stdout: Option<Vec<u8>>,
-    pub affinity: Option<Vec<usize>>,
-    pub niceness: Option<i32>,
 }
 
 pub mod language;

@@ -1,6 +1,6 @@
-use super::util::{lib_dir_str, java_cp, CommandEnvExt};
-use super::{Language, Scenario, ScenarioError, ScenarioResult, Test};
-use nix::sched::{sched_setaffinity, CpuSet};
+use super::util::java_cp;
+use super::{Language, MeasurementMode, Scenario, ScenarioError, ScenarioResult, Test};
+use nix::sched::{CpuSet, sched_setaffinity};
 use nix::unistd::Pid;
 use serde::Deserialize;
 use serde_yml::Deserializer;
@@ -9,6 +9,12 @@ use std::io::{BufReader, Error, ErrorKind, Read};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+pub struct PreparedCommand {
+    pub command: Command,
+    pub metrics: String,
+    pub measurement_path: PathBuf,
+}
 
 impl ScenarioResult {
     pub fn success() -> Self {
@@ -87,11 +93,13 @@ impl Scenario {
     }
 
     fn target_path(&self, test: &Test, output_dir: &Path) -> PathBuf {
-        self.test_dir(&test, output_dir).join(&self.language.target_file())
+        self.test_dir(test, output_dir)
+            .join(&self.language.target_file())
     }
 
     fn source_path(&self, output_dir: &Path) -> PathBuf {
-        self.scenario_dir(output_dir).join(&self.language.source_file())
+        self.scenario_dir(output_dir)
+            .join(&self.language.source_file())
     }
 
     fn stdout_path(&self, test: &Test, output_dir: &Path) -> PathBuf {
@@ -118,12 +126,23 @@ impl Scenario {
         &self,
         test: &Test,
         output_dir: &Path,
-        affinity: &Option<Vec<usize>>,
-        niceness: Option<i32>,
-    ) -> Result<Command, ScenarioError> {
+    ) -> Result<PreparedCommand, ScenarioError> {
+        let mode = test.mode.or(self.mode).unwrap_or(MeasurementMode::Process);
+        let affinity = test.affinity.clone().or(self.affinity.clone());
+        let niceness = test.niceness.or(self.niceness);
+        let iterations = test.iterations.or(self.iterations).unwrap_or(1);
+        let metrics = test
+            .metrics
+            .clone()
+            .or(self.metrics.clone())
+            .unwrap_or_default()
+            .join(",");
+
         match self.language {
             Language::C | Language::Cpp | Language::Rust | Language::Cs => {
-                if test.runtime_options.is_some() || self.runtime_options.is_some() {
+                if matches!(mode, MeasurementMode::Process)
+                    && (test.runtime_options.is_some() || self.runtime_options.is_some())
+                {
                     return Err(ScenarioError::Io(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
                         format!(
@@ -136,8 +155,14 @@ impl Scenario {
             _ => {}
         }
 
-        let target = self.target_path(&test, output_dir).to_string_lossy().to_string();
-        let test_dir = self.test_dir(&test, output_dir).to_string_lossy().to_string();
+        let target = self
+            .target_path(test, output_dir)
+            .to_string_lossy()
+            .to_string();
+        let test_dir = self
+            .test_dir(test, output_dir)
+            .to_string_lossy()
+            .to_string();
 
         let mut command = match self.language {
             Language::C | Language::Cpp => vec![target],
@@ -152,7 +177,7 @@ impl Scenario {
                 vec![executable.to_string_lossy().to_string()]
             }
             Language::Java => {
-                let cp_flags = format!("{}:{}:{}", lib_dir_str(), test_dir, java_cp());
+                let cp_flags = format!("{}:{}:{}", "/usr/lib", test_dir, java_cp());
                 vec![
                     "java".to_string(),
                     "--enable-native-access=ALL-UNNAMED".to_string(),
@@ -176,11 +201,10 @@ impl Scenario {
                         "Rust executable not found",
                     )));
                 };
-
                 vec![executable.to_string_lossy().to_string()]
             }
-            Language::Python => vec![],
-            Language::Ruby => vec![],
+            Language::Python => vec!["python3".to_string(), target],
+            Language::Ruby => vec!["ruby".to_string(), target],
         };
 
         let runtime_opts = test
@@ -200,29 +224,33 @@ impl Scenario {
             }
         }
 
-        let stdout_path = self.stdout_path(&test, output_dir);
+        if matches!(mode, MeasurementMode::Internal) {
+            command.push(iterations.to_string());
+            command.push(metrics.clone());
+        }
+
+        let stdout_path = self.stdout_path(test, output_dir);
         let _ = std::fs::remove_file(&stdout_path);
         let stdout_file = File::create(&stdout_path)?;
-        let test_stdin_path = self.test_stdin_path(&test, output_dir);
+        let test_stdin_path = self.test_stdin_path(test, output_dir);
         let scenario_stdin_path = self.scenario_stdin_path(output_dir);
-        let test_stdin_config = if test_stdin_path.exists() {
-            let stdin_file = File::open(&test_stdin_path)?;
-            Stdio::from(stdin_file)
+        let stdin_config = if test_stdin_path.exists() {
+            Stdio::from(File::open(&test_stdin_path)?)
         } else if scenario_stdin_path.exists() {
-            let stdin_file = File::open(&scenario_stdin_path)?;
-            Stdio::from(stdin_file)
+            Stdio::from(File::open(&scenario_stdin_path)?)
         } else {
             Stdio::null()
         };
 
-        let affinity_clone = affinity.clone();
+        let measurement_path = self.test_dir(test, output_dir).join("measurement.csv");
 
+        let affinity_clone = affinity.clone();
         let mut cmd = Command::new(&command[0]);
         cmd.args(&command[1..])
-            .with_signals_env()
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::piped())
-            .stdin(test_stdin_config);
+            .stdin(stdin_config)
+            .env("LG_OUTPUT", &measurement_path);
 
         unsafe {
             cmd.pre_exec(move || {
@@ -257,14 +285,24 @@ impl Scenario {
             });
         }
 
-        Ok(cmd)
+        Ok(PreparedCommand {
+            command: cmd,
+            metrics,
+            measurement_path,
+        })
     }
 
     pub fn build_command(&self, test: &Test, output_dir: &Path) -> Vec<String> {
         let scenario = self.scenario_dir(output_dir).to_string_lossy().to_string();
         let source = self.source_path(output_dir).to_string_lossy().to_string();
-        let target = self.target_path(&test, output_dir).to_string_lossy().to_string();
-        let test_dir = self.test_dir(&test, output_dir).to_string_lossy().to_string();
+        let target = self
+            .target_path(test, output_dir)
+            .to_string_lossy()
+            .to_string();
+        let test_dir = self
+            .test_dir(test, output_dir)
+            .to_string_lossy()
+            .to_string();
 
         match self.language {
             Language::C => vec![
@@ -272,7 +310,14 @@ impl Scenario {
                 source,
                 "-o".to_string(),
                 target,
-                "-lsignals".to_string(),
+                "-lgreen".to_string(),
+            ],
+            Language::Cpp => vec![
+                "g++".to_string(),
+                source,
+                "-o".to_string(),
+                target,
+                "-lgreen".to_string(),
             ],
             Language::Cs => vec![
                 "dotnet".to_string(),
@@ -282,15 +327,8 @@ impl Scenario {
                 "--output".to_string(),
                 test_dir,
             ],
-            Language::Cpp => vec![
-                "g++".to_string(),
-                source,
-                "-o".to_string(),
-                target,
-                "-lsignals".to_string(),
-            ],
             Language::Java => {
-                let cp_flags = format!("{}:{}:{}", lib_dir_str(), test_dir, java_cp());
+                let cp_flags = format!("{}:{}:{}", "/usr/lib", test_dir, java_cp());
                 vec![
                     "javac".to_string(),
                     source,
@@ -322,7 +360,6 @@ impl Scenario {
     pub fn build_test(
         &mut self,
         test: &mut Test,
-        index: usize,
         output_dir: &Path,
     ) -> Result<ScenarioResult, ScenarioError> {
         let code = self.code.as_ref().ok_or(ScenarioError::MissingCode)?;
@@ -331,28 +368,30 @@ impl Scenario {
         }
 
         let source_path = self.source_path(output_dir);
-        let test_dir = self.test_dir(&test, output_dir);
+        let scenario_dir = self.scenario_dir(output_dir);
+        let test_dir = self.test_dir(test, output_dir);
 
+        fs::create_dir_all(&scenario_dir)?;
         fs::create_dir_all(&test_dir)?;
         fs::write(&source_path, code)?;
 
-        if test.name.is_none() {
-            test.name = Some(index.to_string());
-        }
         if let Some(stdin_data) = self.stdin.take() {
             fs::write(self.scenario_stdin_path(output_dir), stdin_data)?;
         }
         if let Some(expected_stdout_data) = self.expected_stdout.take() {
-            fs::write(self.scenario_expected_stdout_path(output_dir), expected_stdout_data)?;
+            fs::write(
+                self.scenario_expected_stdout_path(output_dir),
+                expected_stdout_data,
+            )?;
         }
 
         match self.language {
-            Language::Cs => self.prepare_cs_build(&test, output_dir)?,
-            Language::Rust => self.prepare_rust_build(&test, output_dir)?,
+            Language::Cs => self.prepare_cs_build(test, output_dir)?,
+            Language::Rust => self.prepare_rust_build(test, output_dir)?,
             _ => (),
         }
 
-        let mut command = self.build_command(&test, output_dir);
+        let mut command = self.build_command(test, output_dir);
         let compile_opts = test
             .compile_options
             .as_ref()
@@ -365,20 +404,22 @@ impl Scenario {
 
         let output = Command::new(&command[0])
             .args(&command[1..])
-            .with_signals_env()
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()?;
         let code = output.status.code().unwrap_or_default();
-        let out = String::from_utf8_lossy(&output.stdout).to_string();
-        let err = String::from_utf8_lossy(&output.stderr).to_string();
+        let out = String::from_utf8_lossy(&output.stdout).into_owned();
+        let err = String::from_utf8_lossy(&output.stderr).into_owned();
 
         if output.status.success() {
             if let Some(stdin_data) = test.stdin.take() {
-                fs::write(self.test_stdin_path(&test, output_dir), stdin_data)?;
+                fs::write(self.test_stdin_path(test, output_dir), stdin_data)?;
             }
             if let Some(expected_stdout_data) = test.expected_stdout.take() {
-                fs::write(self.test_expected_stdout_path(&test, output_dir), expected_stdout_data)?;
+                fs::write(
+                    self.test_expected_stdout_path(test, output_dir),
+                    expected_stdout_data,
+                )?;
             }
             Ok(ScenarioResult::success_with(out, err))
         } else {
@@ -459,12 +500,11 @@ impl Scenario {
         })?;
 
         let deps = test.dependencies.as_ref().or(self.dependencies.as_ref());
-
         if let Some(dependencies) = deps {
             for dep in dependencies {
                 let version = dep.version.as_deref().unwrap_or("*");
                 dep_formatted.push_str(&format!(
-                    r#"<PackageReference Include="{}" Version="{}" />\n"#,
+                    "<PackageReference Include=\"{}\" Version=\"{}\" />\n",
                     dep.name, version
                 ));
             }
@@ -489,26 +529,25 @@ impl Scenario {
         let mut dep_formatted = String::new();
 
         let deps = test.dependencies.as_ref().or(self.dependencies.as_ref());
-
         if let Some(dependencies) = deps {
             for dep in dependencies {
                 let version = dep.version.as_deref().unwrap_or("*");
-                dep_formatted.push_str(&format!(r#"{} = "{}"\n"#, dep.name, version));
+                dep_formatted.push_str(&format!("{} = \"{}\"\n", dep.name, version));
             }
         }
 
         let toml_content = format!(
             r#"[package]
-        name = "program"
-        version = "0.1.0"
-        edition = "2024"
+name = "program"
+version = "0.1.0"
+edition = "2024"
 
-        [[bin]]
-        name = "program"
-        path = "main.rs"
+[[bin]]
+name = "program"
+path = "main.rs"
 
-        [dependencies]
-        {}"#,
+[dependencies]
+{}"#,
             dep_formatted
         );
 

@@ -1,44 +1,8 @@
 use base64::Engine;
-use serde::{de, Deserialize, Deserializer, Serializer};
+use green::measurements::{self, MeasurementContext};
+use serde::{Deserialize, Deserializer, Serializer, de};
 use serde_yml::Value;
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
-
-const GL_LIB_DIR: &str = env!("GL_LIB_DIR");
-
-pub trait CommandEnvExt {
-    fn with_signals_env(&mut self) -> &mut Self;
-}
-
-impl CommandEnvExt for Command {
-    fn with_signals_env(&mut self) -> &mut Self {
-        let lib_dir = lib_dir_str();
-        let append_lib_dir = |var_name: &str| {
-            env::var(var_name)
-                .map(|current| format!("{}:{}", current, lib_dir))
-                .unwrap_or_else(|_| lib_dir.to_string())
-        };
-
-        self.env("LIBRARY_PATH", append_lib_dir("GL_LIBRARY_PATH"))
-            .env("LD_LIBRARY_PATH", append_lib_dir("GL_LD_LIBRARY_PATH"))
-            .env("CPATH", append_lib_dir("GL_CPATH"))
-    }
-}
-
-pub fn lib_dir() -> PathBuf {
-    env::var_os("GL_LIB_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(GL_LIB_DIR))
-}
-
-pub fn lib_dir_str() -> String {
-    lib_dir().to_string_lossy().into_owned()
-}
-
-pub fn measurements_dir() -> PathBuf {
-    PathBuf::from(".").join("measurements")
-}
+use std::ffi::CString;
 
 pub fn java_cp() -> String {
     std::env::var("CLASSPATH").unwrap_or_default()
@@ -88,5 +52,23 @@ where
             serializer.serialize_str(&encoded)
         }
         None => serializer.serialize_none(),
+    }
+}
+
+pub struct Measurement(*mut MeasurementContext);
+
+impl Measurement {
+    pub fn start(metrics: &str) -> Self {
+        let c = CString::new(metrics).expect("metrics string contains null byte");
+        let ptr = measurements::measure_start(c.as_ptr());
+        Self(ptr)
+    }
+}
+
+impl Drop for Measurement {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            measurements::measure_stop(self.0);
+        }
     }
 }

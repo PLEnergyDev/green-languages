@@ -22,8 +22,8 @@ Setup Management:
 CPU Management:
   cpu disable [PCT]  Disable PCT% of CPUs (default: 100%)
   cpu enable [all]   Re-enable all CPUs (default behavior)
-  cpu disable ht     Disable hyperthreading
-  cpu enable ht      Re-enable hyperthreading
+  cpu disable smt    Disable hyperthreading (SMT)
+  cpu enable smt     Re-enable hyperthreading (SMT)
   cpu disable cs     Disable all C-states
   cpu enable cs      Re-enable all C-states
 
@@ -41,7 +41,7 @@ Examples:
   green-languages-setups cpu disable 50
   green-languages-setups cpu disable
   green-languages-setups cpu enable
-  green-languages-setups cpu disable ht
+  green-languages-setups cpu disablesmt 
   green-languages-setups cpu enable cs
   green-languages-setups aslr disable
   green-languages-setups cache drop
@@ -189,7 +189,7 @@ enable_cs() {
     echo "Enabled $count C-state entries across all CPUs"
 }
 
-disable_ht() {
+disable_smt() {
     if [ ! -f "/sys/devices/system/cpu/smt/control" ]; then
         echo "Error: SMT control interface not available on this kernel"
         return 1
@@ -200,7 +200,7 @@ disable_ht() {
     echo "Hyperthreading disabled"
 }
 
-enable_ht() {
+enable_smt() {
     if [ ! -f "/sys/devices/system/cpu/smt/control" ]; then
         echo "Error: SMT control interface not available on this kernel"
         return 1
@@ -275,8 +275,8 @@ main() {
         cpu)
             case "$subcommand" in
                 disable)
-                    if [ "$arg3" = "ht" ]; then
-                        disable_ht
+                    if [ "$arg3" = "smt" ]; then
+                        disable_smt
                     elif [ "$arg3" = "cs" ]; then
                         disable_cs
                     else
@@ -284,8 +284,8 @@ main() {
                     fi
                     ;;
                 enable)
-                    if [ "$arg3" = "ht" ]; then
-                        enable_ht
+                    if [ "$arg3" = "smt" ]; then
+                        enable_smt
                     elif [ "$arg3" = "cs" ]; then
                         enable_cs
                     else
@@ -294,7 +294,7 @@ main() {
                     ;;
                 *)
                     echo "Unknown cpu subcommand: $subcommand"
-                    echo "Available: disable [PCT|ht|cs], enable [ht|cs]"
+                    echo "Available: disable [PCT|smt|cs], enable [smt|cs]"
                     exit 1
                     ;;
             esac

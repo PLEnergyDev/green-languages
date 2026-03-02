@@ -17,3 +17,24 @@ impl Test {
             .map(|document| Test::deserialize(document)))
     }
 }
+
+impl Default for Test {
+    fn default() -> Self {
+        Self {
+            name: Some("1".to_string()),
+            compile_options: None,
+            runtime_options: None,
+            dependencies: None,
+            affinity: None,
+            niceness: None,
+            mode: None,
+            metrics: None,
+            runs: None,
+            iterations: None,
+            cooldown: None,
+            arguments: None,
+            stdin: None,
+            expected_stdout: None,
+        }
+    }
+}

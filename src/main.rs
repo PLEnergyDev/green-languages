@@ -1,8 +1,8 @@
+use clap::Parser;
 use flexi_logger::{DeferredNow, FileSpec, Logger, Record, WriteMode};
-use green_languages::core::util::measurements_dir;
 use green_languages::MeasureCommand;
 use std::io::{Error, Write};
-use clap::Parser;
+use std::path::PathBuf;
 
 fn custom_format(w: &mut dyn Write, now: &mut DeferredNow, record: &Record) -> Result<(), Error> {
     write!(
@@ -30,13 +30,13 @@ fn configure_logger(output_dir: &std::path::Path) -> Result<(), Box<dyn std::err
 
 fn main() {
     let args = MeasureCommand::parse();
-    let output_dir = args.output.clone().unwrap_or_else(measurements_dir);
-    
+    let output_dir = args.output.clone().unwrap_or_else(|| PathBuf::from("."));
+
     if let Err(err) = configure_logger(&output_dir) {
         eprintln!("Failed to configure logger: {}", err);
         std::process::exit(1);
     }
-    
+
     if let Err(err) = MeasureCommand::handle(args) {
         eprintln!("{}", err);
         std::process::exit(1);
