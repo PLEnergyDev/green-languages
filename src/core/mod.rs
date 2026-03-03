@@ -29,7 +29,7 @@ pub struct Dependency {
     pub version: Option<String>,
 }
 
-#[derive(Display, Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Display, Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
 #[strum(serialize_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum MeasurementMode {
@@ -49,11 +49,7 @@ pub struct Scenario {
     pub dependencies: Option<Vec<Dependency>>,
     pub affinity: Option<Vec<usize>>,
     pub niceness: Option<i32>,
-    pub mode: Option<MeasurementMode>,
-    pub metrics: Option<Vec<String>>,
-    pub runs: Option<i32>,
-    pub iterations: Option<i32>,
-    pub cooldown: Option<u64>,
+    pub libgreen: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub arguments: Option<Vec<String>>,
     #[serde(
@@ -83,7 +79,7 @@ pub enum ScenarioError {
     #[error("IO error reading scenario: {0}")]
     Io(#[from] std::io::Error),
     #[error("YAML parsing error: {0}")]
-    Yaml(#[from] serde_yml::Error),
+    Yaml(#[from] serde_yaml_ng::Error),
     #[error("Missing code in scenario")]
     MissingCode,
 }
@@ -108,11 +104,6 @@ pub struct Test {
     pub dependencies: Option<Vec<Dependency>>,
     pub affinity: Option<Vec<usize>>,
     pub niceness: Option<i32>,
-    pub mode: Option<MeasurementMode>,
-    pub metrics: Option<Vec<String>>,
-    pub runs: Option<i32>,
-    pub iterations: Option<i32>,
-    pub cooldown: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub arguments: Option<Vec<String>>,
     #[serde(

@@ -10,12 +10,24 @@ use crate::core::MeasurementMode;
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct MeasureCommand {
-    /// YAML scenario paths to measure
     #[arg(required = true, num_args = 1..)]
     pub scenarios: Vec<PathBuf>,
-    /// Output directory for build artifacts and measurements
     #[arg(short, long)]
     pub output: Option<PathBuf>,
+    #[arg(short, long, default_value = "1")]
+    pub runs: usize,
+    #[arg(short, long, default_value = "1")]
+    pub internal_runs: usize,
+    #[arg(short, long, default_value = "0")]
+    pub cooldown: u64,
+    #[arg(long)]
+    pub rapl: bool,
+    #[arg(long)]
+    pub cycles: bool,
+    #[arg(long)]
+    pub misses: bool,
+    #[arg(long)]
+    pub cstates: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -50,7 +62,7 @@ pub struct Measurement {
     pub affinity: Option<String>,
     pub mode: MeasurementMode,
     pub run: usize,
-    pub iteration: usize,
+    pub internal_run: usize,
     pub time: Option<u64>,
     pub pkg: Option<f64>,
     pub cores: Option<f64>,

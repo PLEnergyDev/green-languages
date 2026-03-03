@@ -11,24 +11,20 @@ code: |
     using System.Runtime.InteropServices;
 
     public class Program {
-        [DllImport("libsignals", EntryPoint = "start_gl")]
-        public static extern bool start_gl();
+        [DllImport("libgreen", EntryPoint = "measure_start")]
+        public static extern IntPtr measure_start([MarshalAs(UnmanagedType.LPStr)] string metrics);
 
-        [DllImport("libsignals", EntryPoint = "end_gl")]
-        public static extern void end_gl();
+        [DllImport("libgreen", EntryPoint = "measure_stop")]
+        public static extern void measure_stop(IntPtr context);
 
-        static void run_benchmark(string[] args) {
-            int degree = int.Parse(args[0]);
-            double x = double.Parse(args[1]);
-            int repetitions = (args.Length > 2) ? int.Parse(args[2]) : 1000;
-
+        static void run_benchmark(int degree, double x) {
             double[] coeffs = new double[degree + 1];
             for (int i = 0; i <= degree; i++) {
                 coeffs[degree - i] = 1.0 / (i + 1);
             }
 
             double totalResult = 0.0;
-            for (int rep = 0; rep < repetitions; rep++) {
+            for (int r = 0; r < 1000000; r++) {
                 double result = 0.0;
                 for (int i = 0; i <= degree; i++) {
                     result = coeffs[i] + x * result;
@@ -36,18 +32,28 @@ code: |
                 totalResult += result;
             }
 
-            Console.WriteLine($"{totalResult / repetitions:F6}");
+            Console.WriteLine($"{totalResult / 1000000:F6}");
         }
 
         public static void Main(string[] args) {
-            while (true) {
-                if (!start_gl()) break;
-                run_benchmark(args);
-                end_gl();
+            if (args.Length < 4) {
+                Console.Error.WriteLine("Usage: <program> <degree> <x> <internal_runs> <metrics>");
+                Environment.Exit(1);
+            }
+
+            int degree = int.Parse(args[0]);
+            double x = double.Parse(args[1]);
+            int internal_runs = int.Parse(args[2]);
+            string metrics = args[3];
+
+            for (int i = 0; i < internal_runs; i++) {
+                IntPtr context = measure_start(metrics);
+                run_benchmark(degree, x);
+                measure_stop(context);
             }
         }
     }
-framework: net9.0
+framework: net10.0
 compile_options:
     - -c Release
     - -p:ImplicitUsings=enable
@@ -57,12 +63,9 @@ compile_options:
     - -p:ConcurrentGarbageCollection=true
     - -p:OptimizationPreference=Speed
     - -p:IlcInstructionSet=native
-arguments: [1000, 0.5, 1000000]
-expected_stdout: !!binary |
-    MS4zODYyOTQK
+arguments: [1000, 0.5]
+expected_stdout: !!binary MS4zODYyOTQK
+libgreen: true
 ---
-name: release
-mode: internal
----
-name: release
-mode: external
+name: optimized
+

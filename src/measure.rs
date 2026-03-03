@@ -9,9 +9,19 @@ use std::path::PathBuf;
 use std::process::Output;
 
 impl MeasureCommand {
+    pub fn metrics_string(&self) -> String {
+        let mut metrics = vec![];
+        if self.rapl    { metrics.push("rapl"); }
+        if self.cycles  { metrics.push("cycles"); }
+        if self.misses  { metrics.push("misses"); }
+        if self.cstates { metrics.push("cstates"); }
+        metrics.join(",")
+    }
+
     pub fn handle(args: Self) -> Result<(), Box<dyn std::error::Error>> {
         let output_dir = args.output.clone().unwrap_or_else(|| PathBuf::from("."));
         std::fs::create_dir_all(&output_dir)?;
+        let metrics = args.metrics_string();
 
         for scenario_path_str in &args.scenarios {
             let scenario_path = scenario_path_str.as_path();
@@ -25,7 +35,15 @@ impl MeasureCommand {
             let mut tests = Test::iterate_from_file(scenario_path)?.peekable();
 
             if tests.peek().is_none() {
-                if let Err(err) = Self::process_test(&mut scenario, Test::default(), &output_dir) {
+                if let Err(err) = Self::process_test(
+                    &mut scenario,
+                    Test::default(),
+                    args.runs,
+                    args.internal_runs,
+                    args.cooldown,
+                    &metrics,
+                    &output_dir,
+                ) {
                     error!("{}", err);
                 }
             } else {
@@ -34,7 +52,15 @@ impl MeasureCommand {
                     if test.name.is_none() {
                         test.name = Some((test_index + 1).to_string());
                     }
-                    if let Err(err) = Self::process_test(&mut scenario, test, &output_dir) {
+                    if let Err(err) = Self::process_test(
+                        &mut scenario,
+                        test,
+                        args.runs,
+                        args.internal_runs,
+                        args.cooldown,
+                        &metrics,
+                        &output_dir,
+                    ) {
                         error!("{}", err);
                     }
                 }
@@ -47,10 +73,10 @@ impl MeasureCommand {
     fn verify_output(
         scenario: &mut Scenario,
         test: &Test,
-        iterations: usize,
+        internal_runs: usize,
         output_dir: &PathBuf,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        match scenario.verify_test(test, iterations, output_dir) {
+        match scenario.verify_test(test, internal_runs, output_dir) {
             Ok(ScenarioResult::Success { out, err }) => {
                 if !out.trim().is_empty() {
                     info!("    Verification output:\n{}", out.trim());
@@ -80,30 +106,26 @@ impl MeasureCommand {
     fn process_test(
         scenario: &mut Scenario,
         mut test: Test,
+        runs: usize,
+        internal_runs: usize,
+        cooldown: u64,
+        metrics: &str,
         output_dir: &PathBuf,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let test_name = test.name.as_ref().unwrap();
-        let mode = test
-            .mode
-            .or(scenario.mode)
-            .unwrap_or(MeasurementMode::Process);
+
+        let mode = if scenario.libgreen.unwrap_or(false) {
+            MeasurementMode::Internal
+        } else {
+            MeasurementMode::Process
+        };
+
         let affinity = test.affinity.clone().or(scenario.affinity.clone());
         let niceness = test.niceness.or(scenario.niceness);
-        let runs = test.runs.or(scenario.runs).map(|r| r as usize).unwrap_or(1);
-        let iterations = test
-            .iterations
-            .or(scenario.iterations)
-            .map(|i| i as usize)
-            .unwrap_or(1);
-        let cooldown = test.cooldown.or(scenario.cooldown).unwrap_or(0);
+
         let affinity_str = affinity
             .as_ref()
-            .map(|a| {
-                a.iter()
-                    .map(|n| n.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            })
+            .map(|a| a.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","))
             .unwrap_or_else(|| "-".to_string());
         let niceness_str = niceness
             .map(|n| n.to_string())
@@ -143,10 +165,8 @@ impl MeasureCommand {
             }
         }
 
-        info!("  Test started ({} runs)", runs);
-        Self::measure(
-            scenario, &test, mode, runs, iterations, cooldown, output_dir,
-        )?;
+        info!("  Test started ({} runs, {} internal runs)", runs, internal_runs);
+        Self::measure(scenario, &test, runs, internal_runs, cooldown, metrics, output_dir)?;
         info!("  Test completed");
 
         Ok(())
@@ -176,6 +196,13 @@ impl MeasureCommand {
         measurement_path: &PathBuf,
         output_dir: &PathBuf,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let affinity = test
+            .affinity
+            .as_ref()
+            .or(scenario.affinity.as_ref())
+            .map(|a| a.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","));
+        let niceness = test.niceness.or(scenario.niceness);
+
         let csv_path = output_dir.join("measurements.csv");
         let file_exists = csv_path.exists();
         let out_file = OpenOptions::new()
@@ -186,15 +213,8 @@ impl MeasureCommand {
             .has_headers(!file_exists)
             .from_writer(out_file);
 
-        let affinity = test
-            .affinity
-            .as_ref()
-            .or(scenario.affinity.as_ref())
-            .map(|a| a.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","));
-        let niceness = test.niceness.or(scenario.niceness);
-
         let mut reader = csv::Reader::from_path(measurement_path)?;
-        let mut iteration = 1usize;
+        let mut internal_run = 1usize;
         for result in reader.deserialize::<RawMeasurement>() {
             let raw = result?;
             writer.serialize(crate::Measurement {
@@ -205,7 +225,7 @@ impl MeasureCommand {
                 affinity: affinity.clone(),
                 mode,
                 run,
-                iteration,
+                internal_run,
                 time: raw.time,
                 pkg: raw.pkg,
                 cores: raw.cores,
@@ -226,7 +246,7 @@ impl MeasureCommand {
                 c10_pkg_residency: raw.c10_pkg_residency,
                 ended: raw.ended,
             })?;
-            iteration += 1;
+            internal_run += 1;
         }
 
         writer.flush()?;
@@ -237,10 +257,10 @@ impl MeasureCommand {
     fn measure(
         scenario: &mut Scenario,
         test: &Test,
-        mode: MeasurementMode,
         runs: usize,
-        iterations: usize,
+        internal_runs: usize,
         cooldown: u64,
+        metrics: &str,
         output_dir: &PathBuf,
     ) -> Result<(), Box<dyn std::error::Error>> {
         for run in 1..=runs {
@@ -253,20 +273,32 @@ impl MeasureCommand {
 
             let PreparedCommand {
                 mut command,
-                metrics,
+                metrics: metrics_str,
                 measurement_path,
-            } = scenario.exec_command(test, output_dir)?;
+                mode,
+            } = scenario.exec_command(test, internal_runs, metrics, output_dir)?;
             let child = command.spawn()?;
 
             let output = match mode {
                 MeasurementMode::Process => {
-                    let _context = Measurement::start(&metrics);
-                    child.wait_with_output()?
+                    unsafe { std::env::set_var("LG_OUTPUT", &measurement_path); }
+                    let _context = Measurement::start(&metrics_str);
+                    let result = child.wait_with_output()?;
+                    unsafe { std::env::remove_var("LG_OUTPUT"); }
+                    result
                 }
                 MeasurementMode::Internal => child.wait_with_output()?,
             };
 
-            Self::validate_output(&output)?;
+            if let Err(err) = Self::validate_output(&output) {
+                let _ = fs::remove_file(&measurement_path);
+                return Err(err);
+            }
+
+            if let Err(err) = Self::verify_output(scenario, test, internal_runs, output_dir) {
+                let _ = fs::remove_file(&measurement_path);
+                return Err(err);
+            }
 
             if measurement_path.exists() {
                 if let Err(e) = Self::write_measurements(
@@ -280,8 +312,6 @@ impl MeasureCommand {
                     error!("    Failed to write measurements: {}", e);
                 }
             }
-
-            Self::verify_output(scenario, test, iterations, output_dir)?;
 
             info!("    Run {}/{} completed", run, runs);
         }

@@ -8,18 +8,14 @@ description: |
     This requires only n multiplications and n additions, making it much more efficient.
 code: |
     public class Program {
-        static void run_benchmark(String[] args) {
-            int degree = Integer.parseInt(args[0]);
-            double x = Double.parseDouble(args[1]);
-            int repetitions = (args.length > 2) ? Integer.parseInt(args[2]) : 1000;
-
+        static void run_benchmark(int degree, double x) {
             double[] coeffs = new double[degree + 1];
             for (int i = 0; i <= degree; i++) {
                 coeffs[degree - i] = 1.0 / (i + 1);
             }
 
             double totalResult = 0.0;
-            for (int rep = 0; rep < repetitions; rep++) {
+            for (int r = 0; r < 1000000; r++) {
                 double result = 0.0;
                 for (int i = 0; i <= degree; i++) {
                     result = coeffs[i] + x * result;
@@ -27,25 +23,33 @@ code: |
                 totalResult += result;
             }
 
-            System.out.printf("%.6f\n", totalResult / repetitions);
+            System.out.printf("%.6f\n", totalResult / 1000000);
         }
 
-        public static void main(String[] args) throws Throwable {
-            Signals signals = new Signals();
-            while (true) {
-                if (signals.startGl() == 0) break;
-                run_benchmark(args);
-                signals.endGl();
+        public static void main(String[] args) {
+            if (args.length < 4) {
+                System.err.println("Usage: <program> <degree> <x> <internal_runs> <metrics>");
+                System.exit(1);
+            }
+
+            int degree = Integer.parseInt(args[0]);
+            double x = Double.parseDouble(args[1]);
+            int internal_runs = Integer.parseInt(args[2]);
+            String metrics = args[3];
+
+            Green green = new Green();
+
+            for (int i = 0; i < internal_runs; i++) {
+                long handle = green.measureStart(metrics);
+                run_benchmark(degree, x);
+                green.measureStop(handle);
             }
         }
     }
-arguments: [1000, 0.5, 1000000]
+arguments: [1000, 0.5]
 compile_options: [-server]
-expected_stdout: !!binary |
-    MS4zODYyOTQK
+expected_stdout: !!binary MS4zODYyOTQK
+libgreen: true
 ---
 name: server
-mode: internal
----
-name: server
-mode: external
+

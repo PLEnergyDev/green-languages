@@ -20,7 +20,6 @@ flexi_logger = { version = "0.31.4", default-features = false }
 log = "0.4.28"
 green = { path = "libgreen" }
 serde = { version = "1.0.225", features = ["derive"] }
-serde_yml = "0.0.12"
 strum = { version = "0.27.2", features = ["derive"] }
 thiserror = "2.0.16"
 nix = { version = "0.30.1", features = ["process", "sched"] }
@@ -28,4 +27,5 @@ libc = "0.2.176"
 perf-event2 = "0.7.4"
 perf-event-data = "0.1.8"
 num_cpus = "1.17.0"
+serde_yaml_ng = "0.10.0"
 

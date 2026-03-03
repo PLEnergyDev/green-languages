@@ -6,8 +6,7 @@ description: |
     Each iteration involves a floating-point comparison, a floating-point division and a floating-point addition, as well as an integer increment.
 code: |
     public class Program {
-        static void run_benchmark(String[] args) {
-            int m = Integer.parseInt(args[0]);
+        static void run_benchmark(int m) {
             double sum = 0.0;
             int n = 0;
             while (sum < m) {
@@ -17,22 +16,29 @@ code: |
             System.out.printf("%d\n", n);
         }
 
-        public static void main(String[] args) throws Throwable {
-            Signals signals = new Signals();
-            while (true) {
-                if (signals.startGl() == 0) break;
-                run_benchmark(args);
-                signals.endGl();
+        public static void main(String[] args) {
+            if (args.length < 3) {
+                System.err.println("Usage: <program> <m> <internal_runs> <metrics>");
+                System.exit(1);
+            }
+
+            int m = Integer.parseInt(args[0]);
+            int internal_runs = Integer.parseInt(args[1]);
+            String metrics = args[2];
+
+            Green green = new Green();
+
+            for (int i = 0; i < internal_runs; i++) {
+                long handle = green.measureStart(metrics);
+                run_benchmark(m);
+                green.measureStop(handle);
             }
         }
     }
 arguments: [20]
 compile_options: [-server]
-expected_stdout: !!binary |
-    MjcyNDAwNjAwCg==
+expected_stdout: !!binary MjcyNDAwNjAwCg==
+libgreen: true
 ---
 name: server
-mode: internal
----
-name: server
-mode: external
+

@@ -1,7 +1,7 @@
 use base64::Engine;
 use green::measurements::{self, MeasurementContext};
 use serde::{Deserialize, Deserializer, Serializer, de};
-use serde_yml::Value;
+use serde_yaml_ng::Value;
 use std::ffi::CString;
 
 pub fn java_cp() -> String {

@@ -6,10 +6,7 @@ description: |
     Multiply the two matrices and output the contents of the last cell.
 code: |
     public class Program {
-        static void run_benchmark(String[] args) {
-            int n = Integer.parseInt(args[0]);
-            int repetitions = (args.length > 1) ? Integer.parseInt(args[1]) : 1000;
-
+        static void run_benchmark(int n) {
             double[] A = new double[n * n];
             double[] B = new double[n * n];
             double[] C = new double[n * n];
@@ -21,7 +18,7 @@ code: |
             }
 
             double totalResult = 0.0;
-            for (int rep = 0; rep < repetitions; rep++) {
+            for (int r = 0; r < 1000; r++) {
                 for (int i = 0; i < n; i++) {
                     for (int j = 0; j < n; j++) {
                         double sum = 0.0;
@@ -34,25 +31,32 @@ code: |
                 totalResult += C[n*n - 1];
             }
 
-            System.out.printf("%.0f\n", totalResult / repetitions);
+            System.out.printf("%.0f\n", totalResult / 1000);
         }
 
-        public static void main(String[] args) throws Throwable {
-            Signals signals = new Signals();
-            while (true) {
-                if (signals.startGl() == 0) break;
-                run_benchmark(args);
-                signals.endGl();
+        public static void main(String[] args) {
+            if (args.length < 3) {
+                System.err.println("Usage: <program> <n> <internal_runs> <metrics>");
+                System.exit(1);
+            }
+
+            int n = Integer.parseInt(args[0]);
+            int internal_runs = Integer.parseInt(args[1]);
+            String metrics = args[2];
+
+            Green green = new Green();
+
+            for (int i = 0; i < internal_runs; i++) {
+                long handle = green.measureStart(metrics);
+                run_benchmark(n);
+                green.measureStop(handle);
             }
         }
     }
-arguments: [200, 1000]
+arguments: [200]
 compile_options: [-server]
-expected_stdout: !!binary |
-    MTg0ODcxMDAK
+expected_stdout: !!binary MTg0ODcxMDAK
+libgreen: true
 ---
 name: server
-mode: internal
----
-name: server
-mode: external
+

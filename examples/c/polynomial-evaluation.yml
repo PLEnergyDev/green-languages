@@ -9,20 +9,16 @@ description: |
 code: |
     #include <stdio.h>
     #include <stdlib.h>
-    #include <singals.h>
+    #include <green.h>
 
-    void run_benchmark(int argc, char **argv) {
-        int degree = atoi(argv[1]);
-        double x = atof(argv[2]);
-        int repetitions = (argc > 3) ? atoi(argv[3]) : 1000;
-
+    void run_benchmark(int degree, double x) {
         double *coeffs = malloc((degree + 1) * sizeof(double));
         for (int i = 0; i <= degree; i++) {
             coeffs[degree - i] = 1.0 / (i + 1);
         }
 
         double total_result = 0.0;
-        for (int rep = 0; rep < repetitions; rep++) {
+        for (int r = 0; r < 1000000; r++) {
             double result = 0.0;
             for (int i = 0; i <= degree; i++) {
                 result = coeffs[i] + x * result;
@@ -30,25 +26,33 @@ code: |
             total_result += result;
         }
 
-        printf("%.6f\n", total_result / repetitions);
         free(coeffs);
+        printf("%.6f\n", total_result / 1000000);
     }
 
     int main(int argc, char **argv) {
-        while (1) {
-            if (!start_gl()) break;
-            run_benchmark(argc, argv);
-            end_gl();
+        if (argc < 5) {
+            fprintf(stderr, "Usage: %s <degree> <x> <internal_runs> <metrics>\n", argv[0]);
+            return 1;
         }
+
+        int degree = atoi(argv[1]);
+        double x = atof(argv[2]);
+        int internal_runs = atoi(argv[3]);
+        const char *metrics = argv[4];
+
+        for (int i = 0; i < internal_runs; i++) {
+            void *context = measure_start(metrics);
+            run_benchmark(degree, x);
+            measure_stop(context);
+        }
+
         return 0;
     }
-arguments: [1000, 0.5, 1000000]
+arguments: [1000, 0.5]
 compile_options: [-pipe, -O3, -march=native, -fomit-frame-pointer]
-expected_stdout: !!binary |
-    MS4zODYyOTQK
+expected_stdout: !!binary MS4zODYyOTQK
+libgreen: true
 ---
-name: O3
-mode: internal
----
-name: O3
-mode: external
+name: optimized
+

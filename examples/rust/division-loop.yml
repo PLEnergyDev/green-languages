@@ -5,19 +5,17 @@ description: |
     For M = 20 the answer is n = 272400600 and the loop performs that many iterations.
     Each iteration involves a floating-point comparison, a floating-point division and a floating-point addition, as well as an integer increment.
 code: |
-    #[link(name = "signals")]
+    use std::ffi::CString;
+
+    #[link(name = "green")]
     unsafe extern "C" {
-        fn start_gl() -> bool;
-        fn end_gl();
+        fn measure_start(metrics: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn measure_stop(context: *mut std::ffi::c_void);
     }
 
-    fn run_benchmark(args: &[String]) {
-        let m: i32 = args.get(0)
-            .expect("Missing argument")
-            .parse()
-            .expect("Invalid integer");
-        let mut sum = 0.0;
-        let mut n = 0;
+    fn run_benchmark(m: i32) {
+        let mut sum = 0.0f64;
+        let mut n = 0i32;
         while sum < m as f64 {
             n += 1;
             sum += 1.0 / n as f64;
@@ -27,25 +25,27 @@ code: |
 
     fn main() {
         let args: Vec<String> = std::env::args().skip(1).collect();
-        loop {
+        if args.len() < 3 {
+            eprintln!("Usage: <program> <m> <internal_runs> <metrics>");
+            std::process::exit(1);
+        }
+
+        let m: i32 = args[0].parse().expect("Invalid integer");
+        let internal_runs: usize = args[1].parse().expect("Invalid integer");
+        let metrics = CString::new(args[2].as_str()).expect("Invalid metrics string");
+
+        for _ in 0..internal_runs {
             unsafe {
-                if !start_gl() {
-                    break;
-                }
-            }
-            run_benchmark(&args);
-            unsafe {
-                end_gl();
+                let context = measure_start(metrics.as_ptr());
+                run_benchmark(m);
+                measure_stop(context);
             }
         }
     }
 arguments: [20]
 compile_options: [--release]
-expected_stdout: !!binary |
-    MjcyNDAwNjAwCg==
+expected_stdout: !!binary MjcyNDAwNjAwCg==
+libgreen: true
 ---
 name: release
-mode: internal
----
-name: release
-mode: external
+

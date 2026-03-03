@@ -7,63 +7,56 @@ description: |
     Horner's rule rearranges the calculation to: c₀ + x(c₁ + x(c₂ + ... + x(cₙ₋₁ + xcₙ)...))
     This requires only n multiplications and n additions, making it much more efficient.
 code: |
-    #[link(name = "signals")]
+    use std::ffi::CString;
+
+    #[link(name = "green")]
     unsafe extern "C" {
-        fn start_gl() -> bool;
-        fn end_gl();
+        fn measure_start(metrics: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn measure_stop(context: *mut std::ffi::c_void);
     }
 
-    fn run_benchmark(args: &[String]) {
-        let degree: usize = args.get(0)
-            .expect("Missing argument")
-            .parse()
-            .expect("Invalid integer");
-        let x: f64 = args.get(1)
-            .expect("Missing argument")
-            .parse()
-            .expect("Invalid float");
-        let repetitions: usize = args.get(2)
-            .map(|s| s.parse().expect("Invalid integer"))
-            .unwrap_or(1000);
-
-        let mut coeffs = vec![0.0; degree + 1];
+    fn run_benchmark(degree: usize, x: f64) {
+        let mut coeffs = vec![0.0f64; degree + 1];
         for i in 0..=degree {
             coeffs[degree - i] = 1.0 / (i + 1) as f64;
         }
 
-        let mut total_result = 0.0;
-        for _ in 0..repetitions {
-            let mut result = 0.0;
+        let mut total_result = 0.0f64;
+        for _ in 0..1_000_000usize {
+            let mut result = 0.0f64;
             for i in 0..=degree {
                 result = coeffs[i] + x * result;
             }
             total_result += result;
         }
 
-        println!("{:.6}", total_result / repetitions as f64);
+        println!("{:.6}", total_result / 1_000_000f64);
     }
 
     fn main() {
         let args: Vec<String> = std::env::args().skip(1).collect();
-        loop {
+        if args.len() < 4 {
+            eprintln!("Usage: <program> <degree> <x> <internal_runs> <metrics>");
+            std::process::exit(1);
+        }
+
+        let degree: usize = args[0].parse().expect("Invalid integer");
+        let x: f64 = args[1].parse().expect("Invalid float");
+        let internal_runs: usize = args[2].parse().expect("Invalid integer");
+        let metrics = CString::new(args[3].as_str()).expect("Invalid metrics string");
+
+        for _ in 0..internal_runs {
             unsafe {
-                if !start_gl() {
-                    break;
-                }
-            }
-            run_benchmark(&args);
-            unsafe {
-                end_gl();
+                let context = measure_start(metrics.as_ptr());
+                run_benchmark(degree, x);
+                measure_stop(context);
             }
         }
     }
-arguments: [1000, 0.5, 1000000]
+arguments: [1000, 0.5]
 compile_options: [--release]
-expected_stdout: !!binary |
-    MS4zODYyOTQK
+expected_stdout: !!binary MS4zODYyOTQK
+libgreen: true
 ---
 name: release
-mode: internal
----
-name: release
-mode: external
+

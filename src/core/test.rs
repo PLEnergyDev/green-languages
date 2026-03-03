@@ -7,10 +7,10 @@ use std::path::Path;
 impl Test {
     pub fn iterate_from_file(
         path: &Path,
-    ) -> Result<impl Iterator<Item = Result<Test, serde_yml::Error>>, std::io::Error> {
+    ) -> Result<impl Iterator<Item = Result<Test, serde_yaml_ng::Error>>, std::io::Error> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
-        let deserializer = serde_yml::Deserializer::from_reader(reader);
+        let deserializer = serde_yaml_ng::Deserializer::from_reader(reader);
         Ok(deserializer
             .into_iter()
             .skip(1)
@@ -27,11 +27,6 @@ impl Default for Test {
             dependencies: None,
             affinity: None,
             niceness: None,
-            mode: None,
-            metrics: None,
-            runs: None,
-            iterations: None,
-            cooldown: None,
             arguments: None,
             stdin: None,
             expected_stdout: None,

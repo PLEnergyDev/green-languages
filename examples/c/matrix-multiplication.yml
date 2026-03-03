@@ -7,12 +7,9 @@ description: |
 code: |
     #include <stdio.h>
     #include <stdlib.h>
-    #include <singals.h>
+    #include <green.h>
 
-    void run_benchmark(int argc, char **argv) {
-        int n = atoi(argv[1]);
-        int repetitions = (argc > 2) ? atoi(argv[2]) : 1000;
-
+    void run_benchmark(int n) {
         double *A = malloc(n * n * sizeof(double));
         double *B = malloc(n * n * sizeof(double));
         double *C = malloc(n * n * sizeof(double));
@@ -24,7 +21,7 @@ code: |
         }
 
         double total_result = 0.0;
-        for (int rep = 0; rep < repetitions; rep++) {
+        for (int r = 0; r < 1000; r++) {
             for (int i = 0; i < n; i++) {
                 for (int j = 0; j < n; j++) {
                     double sum = 0.0;
@@ -37,27 +34,34 @@ code: |
             total_result += C[n*n - 1];
         }
 
-        printf("%.0f\n", total_result / repetitions);
         free(A);
         free(B);
         free(C);
+        printf("%.0f\n", total_result / 1000);
     }
 
     int main(int argc, char **argv) {
-        while (1) {
-            if (!start_gl()) break;
-            run_benchmark(argc, argv);
-            end_gl();
+        if (argc < 4) {
+            fprintf(stderr, "Usage: %s <n> <internal_runs> <metrics>\n", argv[0]);
+            return 1;
         }
+
+        int n = atoi(argv[1]);
+        int internal_runs = atoi(argv[2]);
+        const char *metrics = argv[3];
+
+        for (int i = 0; i < internal_runs; i++) {
+            void *context = measure_start(metrics);
+            run_benchmark(n);
+            measure_stop(context);
+        }
+
         return 0;
     }
-arguments: [200, 1000]
+arguments: [200]
 compile_options: [-pipe, -O3, -march=native, -fomit-frame-pointer]
-expected_stdout: !!binary |
-    MTg0ODcxMDAK
+expected_stdout: !!binary MTg0ODcxMDAK
+libgreen: true
 ---
-name: O3
-mode: internal
----
-name: O3
-mode: external
+name: optimized
+

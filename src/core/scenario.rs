@@ -3,7 +3,7 @@ use super::{Language, MeasurementMode, Scenario, ScenarioError, ScenarioResult, 
 use nix::sched::{CpuSet, sched_setaffinity};
 use nix::unistd::Pid;
 use serde::Deserialize;
-use serde_yml::Deserializer;
+use serde_yaml_ng::Deserializer;
 use std::fs::{self, File};
 use std::io::{BufReader, Error, ErrorKind, Read};
 use std::os::unix::process::CommandExt;
@@ -14,6 +14,7 @@ pub struct PreparedCommand {
     pub command: Command,
     pub metrics: String,
     pub measurement_path: PathBuf,
+    pub mode: MeasurementMode,
 }
 
 impl ScenarioResult {
@@ -66,7 +67,7 @@ impl TryFrom<&Path> for Scenario {
             ))
         })?;
         let scenario: Scenario =
-            serde_yml::Value::deserialize(first_doc).and_then(serde_yml::from_value)?;
+            serde_yaml_ng::Value::deserialize(first_doc).and_then(serde_yaml_ng::from_value)?;
         Ok(scenario)
     }
 }
@@ -125,24 +126,21 @@ impl Scenario {
     pub fn exec_command(
         &self,
         test: &Test,
+        internal_runs: usize,
+        metrics: &str,
         output_dir: &Path,
     ) -> Result<PreparedCommand, ScenarioError> {
-        let mode = test.mode.or(self.mode).unwrap_or(MeasurementMode::Process);
+        let mode = if self.libgreen.unwrap_or(false) {
+            MeasurementMode::Internal
+        } else {
+            MeasurementMode::Process
+        };
         let affinity = test.affinity.clone().or(self.affinity.clone());
         let niceness = test.niceness.or(self.niceness);
-        let iterations = test.iterations.or(self.iterations).unwrap_or(1);
-        let metrics = test
-            .metrics
-            .clone()
-            .or(self.metrics.clone())
-            .unwrap_or_default()
-            .join(",");
 
         match self.language {
             Language::C | Language::Cpp | Language::Rust | Language::Cs => {
-                if matches!(mode, MeasurementMode::Process)
-                    && (test.runtime_options.is_some() || self.runtime_options.is_some())
-                {
+                if test.runtime_options.is_some() || self.runtime_options.is_some() {
                     return Err(ScenarioError::Io(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
                         format!(
@@ -177,7 +175,7 @@ impl Scenario {
                 vec![executable.to_string_lossy().to_string()]
             }
             Language::Java => {
-                let cp_flags = format!("{}:{}:{}", "/usr/lib", test_dir, java_cp());
+                let cp_flags = format!("{}:{}", test_dir, java_cp());
                 vec![
                     "java".to_string(),
                     "--enable-native-access=ALL-UNNAMED".to_string(),
@@ -225,8 +223,8 @@ impl Scenario {
         }
 
         if matches!(mode, MeasurementMode::Internal) {
-            command.push(iterations.to_string());
-            command.push(metrics.clone());
+            command.push(internal_runs.to_string());
+            command.push(metrics.to_string());
         }
 
         let stdout_path = self.stdout_path(test, output_dir);
@@ -249,8 +247,11 @@ impl Scenario {
         cmd.args(&command[1..])
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::piped())
-            .stdin(stdin_config)
-            .env("LG_OUTPUT", &measurement_path);
+            .stdin(stdin_config);
+
+        if matches!(mode, MeasurementMode::Internal) {
+            cmd.env("LG_OUTPUT", &measurement_path);
+        }
 
         unsafe {
             cmd.pre_exec(move || {
@@ -287,8 +288,9 @@ impl Scenario {
 
         Ok(PreparedCommand {
             command: cmd,
-            metrics,
+            metrics: metrics.to_string(),
             measurement_path,
+            mode,
         })
     }
 
@@ -328,9 +330,10 @@ impl Scenario {
                 test_dir,
             ],
             Language::Java => {
-                let cp_flags = format!("{}:{}:{}", "/usr/lib", test_dir, java_cp());
+                let cp_flags = format!("{}:{}", test_dir, java_cp());
                 vec![
                     "javac".to_string(),
+                    "/usr/include/Green.java".to_string(),
                     source,
                     "-d".to_string(),
                     test_dir,
@@ -432,7 +435,7 @@ impl Scenario {
     pub fn verify_test(
         &self,
         test: &Test,
-        iterations: usize,
+        internal_runs: usize,
         output_dir: &Path,
     ) -> Result<ScenarioResult, ScenarioError> {
         let test_expected_stdout_path = self.test_expected_stdout_path(test, output_dir);
@@ -453,7 +456,7 @@ impl Scenario {
         let mut reader = BufReader::with_capacity(expected_len * 16, file);
         let mut buffer = vec![0u8; expected_len];
 
-        for i in 0..iterations {
+        for i in 0..internal_runs {
             match reader.read_exact(&mut buffer) {
                 Ok(_) => {
                     if buffer != expected {
@@ -547,7 +550,10 @@ name = "program"
 path = "main.rs"
 
 [dependencies]
-{}"#,
+{}
+
+[workspace]
+"#,
             dep_formatted
         );
 
