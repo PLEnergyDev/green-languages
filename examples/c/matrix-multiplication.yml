@@ -4,6 +4,7 @@ description: |
     Create two square matrices of size N×N.
     Each cell within these two matrices will be initialized with the sum of their row and column indices.
     Multiply the two matrices and output the contents of the last cell.
+libgreen: true
 code: |
     #include <stdio.h>
     #include <stdlib.h>

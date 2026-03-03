@@ -121,13 +121,13 @@ impl MeasureCommand {
         };
 
         let affinity = test.affinity.clone().or(scenario.affinity.clone());
-        let niceness = test.niceness.or(scenario.niceness);
+        let nice = test.nice.or(scenario.nice);
 
         let affinity_str = affinity
             .as_ref()
             .map(|a| a.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","))
             .unwrap_or_else(|| "-".to_string());
-        let niceness_str = niceness
+        let niceness_str =nice 
             .map(|n| n.to_string())
             .unwrap_or_else(|| "-".to_string());
 
@@ -201,7 +201,7 @@ impl MeasureCommand {
             .as_ref()
             .or(scenario.affinity.as_ref())
             .map(|a| a.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","));
-        let niceness = test.niceness.or(scenario.niceness);
+        let nice = test.nice.or(scenario.nice);
 
         let csv_path = output_dir.join("measurements.csv");
         let file_exists = csv_path.exists();
@@ -221,7 +221,7 @@ impl MeasureCommand {
                 scenario: scenario.name.clone(),
                 language: scenario.language.to_string(),
                 test: test.name.clone().unwrap_or_default(),
-                nice: niceness,
+                nice: nice,
                 affinity: affinity.clone(),
                 mode,
                 run,
@@ -230,6 +230,7 @@ impl MeasureCommand {
                 pkg: raw.pkg,
                 cores: raw.cores,
                 gpu: raw.gpu,
+                ram: raw.ram,
                 psys: raw.psys,
                 cycles: raw.cycles,
                 l1d_misses: raw.l1d_misses,

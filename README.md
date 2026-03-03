@@ -1,29 +1,32 @@
 # green-languages
 
-`green-languages` is a CLI tool that measures the energy use (in Joules) and other performance metrics of whole programs or individual code sections across different programming languages. It provides start/end markers to wrap the code sections you want to measure. These markers are also used to track a measurement iteration count, allowing repeated measurements for the same code section within a loop to detect performance changes during program runtime.
+`green-languages` is a CLI tool that measures the energy use (in Joules) and other performance metrics of whole programs or individual code sections across different programming languages. It provides start/end markers to wrap the code sections you want to measure.
+
+`green-languages` is also capable to keeping track of multiple repeated internal runs in a loop to detect performance changes during program runtime.
 
 ## Usage
 
-Provide a scenario and enable a performance metric:
+Provide a scenario and enable a performance metric bundle:
 
 ```sh
-green-languages fibonacci.yml --rapl -i5
+green-languages fibonacci.yml --runs 5 --rapl
 ```
 
-If the program builds and runs successfully, the `measurements` dir is created, which contains `measurements.csv`, `measurements.log` and the build artifacts. Contents of `measurements.csv`:
+If the program builds and executes successfully `measurements.csv` is created:
 
 ```csv
-scenario,language,test,mode,iteration,time,pkg,cores,gpu,dram,psys,ended
-fibonacci,c,1,process,1,56288,1.087,0.793,0.0,,1.84,1762346358725229
-fibonacci,c,1,process,2,57025,0.905,0.667,0.0,,1.581,1762346358786143
-fibonacci,c,1,process,3,58306,0.997,0.753,0.0,,1.692,1762346358848497
-fibonacci,c,1,process,4,56242,0.654,0.421,0.0,,1.266,1762346358909304
-fibonacci,c,1,process,5,53974,0.83,0.606,0.0,,1.456,1762346358967603
+scenario,language,test,nice,affinity,mode,run,internal_run,time,pkg,cores,gpu,ram,psys,cycles,l1d_misses,l1i_misses,llc_misses,branch_misses,c1_core_residency,c6_core_residency,c7_core_residency,c2_pkg_residency,c3_pkg_residency,c6_pkg_residency,c8_pkg_residency,c10_pkg_residency,ended
+fibonacci,c,1,,,process,1,1,55321,,,,,,,,,,,,,,,,,,,1772538726074754
+fibonacci,c,1,,,process,1,1,51896,1.21,0.815,0.002,,2.134,,,,,,,,,,,,,,1772538757758410
+fibonacci,c,1,,,process,2,1,58293,1.237,0.789,0.002,,2.266,,,,,,,,,,,,,,1772538757817866
+fibonacci,c,1,,,process,3,1,53568,1.099,0.756,0.004,,2.025,,,,,,,,,,,,,,1772538757872790
+fibonacci,c,1,,,process,4,1,56539,0.771,0.521,0.001,,1.632,,,,,,,,,,,,,,1772538757930733
+fibonacci,c,1,,,process,5,1,55524,1.073,0.74,0.004,,2.037,,,,,,,,,,,,,,1772538757987432
 ```
 
-## Available Performance Metrics
+## Available Performance Metric Bundles
 
-| Flag        | Metric                                     | Unit   | Scope       |
+| Bundle      | Metric                                     | Unit   | Scope       |
 | ----------- | ------------------------------------------ | ------ | ----------- |
 |             | Wall-Clock Time (Always Enabled)           | Micros | System-Wide |
 | `--rapl`    | RAPL Energy Domains                        | Joules | System-Wide |
@@ -33,7 +36,7 @@ fibonacci,c,1,process,5,53974,0.83,0.606,0.0,,1.456,1762346358967603
 
 ## Scenarios
 
-A scenario is a **YML file** holding data to execute a program written in a programming language. A basic example of a scenario written in C is shown. Per default, it measures the performance metrics of the whole process.
+A scenario is a **YAML file** holding data to execute a program written in a programming language. A basic example of a scenario written in C is shown. Per default, it measures the performance metrics of the whole process.
 
 ```yml
 name: fibonacci
@@ -53,68 +56,96 @@ code: |
     }
 ```
 
-To measure a code segment in C, use `start_gl()` and `end_gl()` from the `signals.h` library and set `mode: external`.
+To measure a code segment in `C`, use `measure_start()` and `measure_end()` from `green.h` and enable `libgreen: true`.
+
+The `libgreen: true` mapping enables the `internal` mode. In this mode, your executed benchmark receives`<internal_runs> <metrics>` as appended command-line arguments.
+
+Pass parameters `measure_start(metrics)` and `measure_stop(context)`:
 
 ```yml
 name: fibonacci
 language: c
+libgreen: true
 code: |
     #include <stdio.h>
-    #include <signals.h>
+    #include <stdlib.h>
+    #include <green.h>
 
     int fib(int n) {
         if (n <= 1) return n;
         return fib(n - 1) + fib(n - 2);
     }
 
-    int main() {
-        start_gl();
-        int result = fib(35);
-        end_gl();
-        printf("%d\n", result);
-        return 0;
-    }
-mode: external
-```
-
-To measure a code segment in C multiple times, put the markers in an loop and set `mode: internal`. Then use `green-languages fibonacci.yml --rapl -i10` with `-i, --iterations` and the iteration count. This will measure `printf("Hello, World!");` 10 times within the same process.
-
-```yml
-name: fibonacci
-language: c
-code: |
-    #include <stdio.h>
-    #include <signals.h>
-
-    int fib(int n) {
-        if (n <= 1) return n;
-        return fib(n - 1) + fib(n - 2);
-    }
-
-    int main() {
-        while (1) {
-            if (start_gl() == 0) break;
-            int result = fib(35);
-            end_gl();
-            printf("%d\n", result);
+    int main(int argc, char **argv) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: %s <internal_runs> <metrics>\n", argv[0]);
+            return 1;
         }
+        int internal_runs = atoi(argv[1]);
+        const char *metrics = argv[2];
+
+        void *context = measure_start(metrics);
+        int result = fib(35);
+        printf("%d\n", result);
+        measure_stop(context);
+
         return 0;
     }
-mode: internal
 ```
 
-## Supported Programming Languages
+To measure a code segment multiple times in `C` use `-i, --internal-runs` with an internal loop. This will measure `fib(35)` multiple times within the same process. 
+
+```yml
+name: fibonacci
+language: c
+libgreen: true
+code: |
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <green.h>
+
+    int fib(int n) {
+        if (n <= 1) return n;
+        return fib(n - 1) + fib(n - 2);
+    }
+
+    int main(int argc, char **argv) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: %s <internal_runs> <metrics>\n", argv[0]);
+            return 1;
+        }
+        int internal_runs = atoi(argv[1]);
+        const char *metrics = argv[2];
+
+        for (int i = 0; i < internal_runs; i++)
+        {
+            void *context = measure_start(metrics);
+            int result = fib(35);
+            printf("%d\n", result);
+            measure_stop(context);
+        }
+
+        return 0;
+    }
+```
+
+## Supported Languages
 
 ### C/C++
 
 ```c
-#include <signals.h>
+#include <stdlib.h>
+#include <green.h>
 
-int main() {
-    while (1) {
-        if (start_gl() == 0) break;
+int main(int argc, char **argv) {
+    int internal_runs = atoi(argv[1]);
+    const char *metrics = argv[2];
+
+    for (int i = 0; i < internal_runs; i++)
+    {
+        void *context = measure_start(metrics);
         // Code segment to measure
-        end_gl();
+        measure_stop(context);
     }
 }
 ```
@@ -122,13 +153,16 @@ int main() {
 ### Java
 
 ```java
-public static void main(final String[] args) throws Exception {
-    Signals signals = new Signals();
+public static void main(final String[] args) {
+    int internal_runs = Integer.parseInt(args[0]);
+    String metrics = args[1];
 
-    while (true) {
-        if (signals.startGl() == 0) break;
+    Green green = new Green();
+
+    for (int i = 0; i < internal_runs; i++) {
+        long context = green.measureStart(metrics);
         // Code segment to measure
-        signals.endGl();
+        green.measureStop(context);
     }
 }
 ```
@@ -139,17 +173,20 @@ public static void main(final String[] args) throws Exception {
 using System.Runtime.InteropServices;
 
 class Program {
-    [DllImport("libsignals", EntryPoint = "start_gl")]
-    private static extern bool start_gl();
+    [DllImport("libgreen", EntryPoint = "measure_start")]
+    public static extern IntPtr measure_start([MarshalAs(UnmanagedType.LPStr)] string metrics);
 
-    [DllImport("libsignals", EntryPoint = "end_gl")]
-    private static extern void end_gl();
+    [DllImport("libgreen", EntryPoint = "measure_stop")]
+    public static extern void measure_stop(IntPtr context);
 
     public static void Main(string[] args) {
-        while (true) {
-            if (!start_gl()) break;
+        int internal_runs = int.Parse(args[0]);
+        string metrics = args[1];
+
+        for (int i = 0; i < internal_runs; i++) {
+            IntPtr context = measure_start(metrics);
             // Code segment to measure
-            end_gl();
+            measure_stop(context);
         }
     }
 }
@@ -158,7 +195,26 @@ class Program {
 ### Rust
 
 ```rust
-// Coming soon
+    use std::ffi::CString;
+
+    #[link(name = "green")]
+    unsafe extern "C" {
+        fn measure_start(metrics: *const std::ffi::c_char) -> *mut std::ffi::c_void;
+        fn measure_stop(context: *mut std::ffi::c_void);
+    }
+
+    fn main() {
+        let internal_runs: usize = args[0].parse().expect("Invalid integer");
+        let metrics = CString::new(args[1].as_str()).expect("Invalid metrics string");
+
+        for _ in 0..internal_runs {
+            unsafe {
+                let context = measure_start(metrics.as_ptr());
+                // Code segment to measure
+                measure_stop(context);
+            }
+        }
+    }
 ```
 
 ### Ruby
@@ -175,18 +231,19 @@ class Program {
 
 ## Tests
 
-To define multiple tests within for same scenario, enumerate the tests at the end of the file using `---` as delimiter. Example also shows how to pass compile time arguments, input and verify if the output of the code is correct. 
+To define multiple tests within for same scenario, enumerate the tests at the end of the file using `---` as delimiter. The example also shows how to pass compile time arguments and input, and how to verify if the output of the program is correct. 
 
 > [!IMPORTANT]
-> A current limitation is that `expected_stdout` needs to be in `base64` format:
+> A current limitation is that `expected_stdout` must be in `base64` format:
 
 ```yml
 name: fibonacci
 language: c
+libgreen: true
 code: |
     #include <stdio.h>
     #include <stdlib.h>
-    #include <signals.h>
+    #include <green.h>
 
     int fib(int n) {
         if (n <= 1) return n;
@@ -194,52 +251,59 @@ code: |
     }
 
     int main(int argc, char **argv) {
-        int n = argc > 1 ? atoi(argv[1]) : 35;
-        
-        while (1) {
-            if (start_gl() == 0) break;
-            int result = fib(n);
-            end_gl();
-            printf("%d\n", result);
+        if (argc < 4) {
+            fprintf(stderr, "Usage: %s <n> <internal_runs> <metrics>\n", argv[0]);
+            return 1;
         }
+
+        int n = atoi(argv[1]);
+        int internal_runs = atoi(argv[2]);
+        const char *metrics = argv[3];
+
+        for (int i = 0; i < internal_runs; i++)
+        {
+            void *context = measure_start(metrics);
+            int result = fib(n);
+            printf("%d\n", result);
+            measure_stop(context);
+        }
+
         return 0;
     }
-mode: internal
 compile_options: [-O3, -march=native]
 ---
-name: 30 O3
+name: optimized 30
 arguments: [30]
 expected_stdout: !!binary |
     ODMyMDQwCg==
 ---
-name: 35 O3
+name: optimized 35
 arguments: [35]
 expected_stdout: !!binary |
     OTIyNzQ2NQo=
 ---
-name: 40
+name: unoptimized 40
 arguments: [40]
 compile_options: []
 expected_stdout: !!binary |
     MTAyMzM0MTU1Cg==
 ```
 
-## All Scenario Fields
+## All Scenario Mappings
 
-| Field            | Type    | Required | Description                                                                                                                                              |
-| ---------------- | ------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| name             | String  | Yes      | Scenario identifier used in output and logs                                                                                                              |
-| language         | String  | Yes      | Programming language: `c`, `cpp`, `cs`, `java`, `rust`, `python`,                                                                                        |
-| code             | String  | Yes      | Source code to compile and execute                                                                                                                       |
-| description      | String  | No       | Human-readable scenario description                                                                                                                      |
-| mode             | String  | No       | Measurement strategy: `process` (default, entire program), `external` (single iteration within process), `internal` (multiple iterations within process) |
-| compile_options  | List    | No       | Compiler flags for compiled languages. Test-level overrides scenario-level                                                                               |
-| runtime_options  | List    | No       | Runtime interpreter flags for non-compiled languages. Test-level overrides scenario-level                                                                |
-| arguments        | List    | No       | Program arguments. Test-level overrides scenario-level. Supports strings, numbers, booleans                                                              |
-| framework        | String  | No       | Required for C#: target framework (e.g.,net8.0)                                                                                                          |
-| dependencies     | List    | No       | External package dependencies with name and optional version                                                                                             |
-| affinity         | List    | No       | CPU core pinning (e.g.,[0, 1] restricts to cores 0-1). Test-level overrides scenario-level                                                               |
-| niceness         | Integer | No       | Process priority (-20 highest, 19 lowest). Test-level overrides scenario-level                                                                           |
-| stdin            | Binary  | No       | Base64-encoded input piped to program. Test-level overrides scenario-level                                                                               |
-| expected_stdout  | Binary  | No       | Base64-encoded expected output for verification. Test-level overrides scenario-level                                                                     |
+| Field           | Type   | Required | Description                                                                                 |
+| --------------- | ------ | -------- | ------------------------------------------------------------------------------------------- |
+| name            | String | Yes      | Scenario identifier used in output and logs. Test-level defines the test name               |
+| language        | String | Yes      | Language: `c`, `cpp`, `cs`, `java`, `rust`, `python`,                                       |
+| code            | String | Yes      | Source code to compile and execute                                                          |
+| description     | String | No       | Human-readable scenario description                                                         |
+| compile_options | List   | No       | Compiler flags for compiled languages. Test-level overrides scenario-level                  |
+| runtime_options | List   | No       | Runtime interpreter flags for non-compiled languages. Test-level overrides scenario-level   |
+| arguments       | List   | No       | Program arguments. Test-level overrides scenario-level. Supports strings, numbers, booleans |
+| framework       | String | No       | Required for C#: target framework (e.g.,net8.0)                                             |
+| dependencies    | List   | No       | External package dependencies with name and optional version                                |
+| affinity        | List   | No       | CPU core pinning (e.g.,[0, 1] restricts to cores 0-1). Test-level overrides scenario-level  |
+| nice            | Int    | No       | Process priority (-20 highest, 19 lowest). Test-level overrides scenario-level              |
+| stdin           | Binary | No       | Base64-encoded input piped to program. Test-level overrides scenario-level                  |
+| expected_stdout | Binary | No       | Base64-encoded expected output for verification. Test-level overrides scenario-level        |
 

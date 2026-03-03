@@ -4,6 +4,7 @@ description: |
     Create two square matrices of size N×N.
     Each cell within these two matrices will be initialized with the sum of their row and column indices.
     Multiply the two matrices and output the contents of the last cell.
+libgreen: true
 code: |
     use std::ffi::CString;
 
@@ -65,7 +66,6 @@ code: |
 arguments: [200]
 compile_options: [--release]
 expected_stdout: !!binary MTg0ODcxMDAK
-libgreen: true
 ---
 name: release
 

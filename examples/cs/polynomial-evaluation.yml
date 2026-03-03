@@ -6,6 +6,7 @@ description: |
     Instead of calculating each power of x separately (which would require n(n+1)/2 multiplications),
     Horner's rule rearranges the calculation to: c₀ + x(c₁ + x(c₂ + ... + x(cₙ₋₁ + xcₙ)...))
     This requires only n multiplications and n additions, making it much more efficient.
+libgreen: true
 code: |
     using System;
     using System.Runtime.InteropServices;
@@ -65,7 +66,6 @@ compile_options:
     - -p:IlcInstructionSet=native
 arguments: [1000, 0.5]
 expected_stdout: !!binary MS4zODYyOTQK
-libgreen: true
 ---
 name: optimized
 

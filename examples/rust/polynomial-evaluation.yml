@@ -6,6 +6,7 @@ description: |
     Instead of calculating each power of x separately (which would require n(n+1)/2 multiplications),
     Horner's rule rearranges the calculation to: c₀ + x(c₁ + x(c₂ + ... + x(cₙ₋₁ + xcₙ)...))
     This requires only n multiplications and n additions, making it much more efficient.
+libgreen: true
 code: |
     use std::ffi::CString;
 
@@ -56,7 +57,6 @@ code: |
 arguments: [1000, 0.5]
 compile_options: [--release]
 expected_stdout: !!binary MS4zODYyOTQK
-libgreen: true
 ---
 name: release
 

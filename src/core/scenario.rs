@@ -136,7 +136,7 @@ impl Scenario {
             MeasurementMode::Process
         };
         let affinity = test.affinity.clone().or(self.affinity.clone());
-        let niceness = test.niceness.or(self.niceness);
+        let nice = test.nice.or(self.nice);
 
         match self.language {
             Language::C | Language::Cpp | Language::Rust | Language::Cs => {
@@ -273,7 +273,7 @@ impl Scenario {
                     })?;
                 }
 
-                if let Some(nice_value) = niceness {
+                if let Some(nice_value) = nice {
                     if libc::setpriority(libc::PRIO_PROCESS, 0, nice_value) != 0 {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::Other,
