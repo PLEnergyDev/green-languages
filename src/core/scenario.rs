@@ -333,7 +333,6 @@ impl Scenario {
                 let cp_flags = format!("{}:{}", test_dir, java_cp());
                 vec![
                     "javac".to_string(),
-                    "/usr/include/Green.java".to_string(),
                     source,
                     "-d".to_string(),
                     test_dir,

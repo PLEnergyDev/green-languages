@@ -21,7 +21,7 @@ code: |
             }
         }
 
-        double total_result = 0.0;
+        double result = 0.0;
         for (int r = 0; r < 1000; r++) {
             for (int i = 0; i < n; i++) {
                 for (int j = 0; j < n; j++) {
@@ -32,13 +32,13 @@ code: |
                     C[i*n + j] = sum;
                 }
             }
-            total_result += C[n*n - 1];
+            result += C[n*n - 1];
         }
-
         free(A);
         free(B);
         free(C);
-        printf("%.0f\n", total_result / 1000);
+
+        printf("%.0f\n", result / 1000);
     }
 
     int main(int argc, char **argv) {
@@ -62,7 +62,6 @@ code: |
 arguments: [200]
 compile_options: [-pipe, -O3, -march=native, -fomit-frame-pointer]
 expected_stdout: !!binary MTg0ODcxMDAK
-libgreen: true
 ---
 name: optimized
 

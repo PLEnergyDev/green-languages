@@ -6,6 +6,12 @@ description: |
     Multiply the two matrices and output the contents of the last cell.
 libgreen: true
 code: |
+    class Green {
+        static { System.loadLibrary("green"); }
+        public native long measureStart(String events);
+        public native void measureStop(long context);
+    }
+
     public class Program {
         static void run_benchmark(int n) {
             double[] A = new double[n * n];

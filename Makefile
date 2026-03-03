@@ -1,7 +1,6 @@
-GL_SO := target/release/libgreen.so
-GL_A := target/release/libgreen.a
-GL_HEADER := libgreen/include/green.h
-GL_JNI := libgreen/include/Green.java
+LG_SO := target/release/libgreen.so
+LG_A := target/release/libgreen.a
+LG_HEADER := libgreen/include/green.h
 LIB_DIR := /usr/lib
 INCLUDE_DIR := /usr/include
 BIN_DIR := /usr/bin
@@ -12,10 +11,9 @@ all: release
 
 release:
 	cargo build --release --workspace
-	sudo install -m755 $(GL_SO) $(LIB_DIR)
-	sudo install -m755 $(GL_A) $(LIB_DIR)
-	sudo install -m644 $(GL_HEADER) $(INCLUDE_DIR)
-	sudo install -m644 $(GL_JNI) $(INCLUDE_DIR)
+	sudo install -m755 $(LG_SO) $(LIB_DIR)
+	sudo install -m755 $(LG_A) $(LIB_DIR)
+	sudo install -m644 $(LG_HEADER) $(INCLUDE_DIR)
 	sudo ldconfig
 	sudo install -m755 $(EXE) $(BIN_DIR)/green-languages
 	sudo install -m755 scripts/setups.sh $(BIN_DIR)/green-languages-setups
@@ -32,7 +30,6 @@ uninstall:
 	sudo rm -f $(LIB_DIR)/libgreen.so
 	sudo rm -f $(LIB_DIR)/libgreen.a
 	sudo rm -f $(INCLUDE_DIR)/green.h
-	sudo rm -f $(INCLUDE_DIR)/Green.java
 	sudo ldconfig
 	cargo clean
 

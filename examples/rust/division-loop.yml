@@ -15,8 +15,8 @@ code: |
     }
 
     fn run_benchmark(m: i32) {
-        let mut sum = 0.0f64;
-        let mut n = 0i32;
+        let mut sum: f64 = 0.0f64;
+        let mut n: i32 = 0;
         while sum < m as f64 {
             n += 1;
             sum += 1.0 / n as f64;

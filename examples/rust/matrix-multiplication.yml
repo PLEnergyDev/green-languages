@@ -27,7 +27,7 @@ code: |
             }
         }
 
-        let mut total_result = 0.0f64;
+        let mut result: f64 = 0.0f64;
         for _ in 0..1000 {
             for i in 0..n {
                 for j in 0..n {
@@ -38,10 +38,10 @@ code: |
                     c[i * n + j] = sum;
                 }
             }
-            total_result += c[n * n - 1];
+            result += c[n * n - 1];
         }
 
-        println!("{:.0}", total_result / 1000.0);
+        println!("{:.0}", result / 1000.0);
     }
 
     fn main() {
