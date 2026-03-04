@@ -11,10 +11,18 @@ use std::process::Output;
 impl MeasureCommand {
     pub fn metrics_string(&self) -> String {
         let mut metrics = vec![];
-        if self.rapl    { metrics.push("rapl"); }
-        if self.cycles  { metrics.push("cycles"); }
-        if self.misses  { metrics.push("misses"); }
-        if self.cstates { metrics.push("cstates"); }
+        if self.rapl {
+            metrics.push("rapl");
+        }
+        if self.cycles {
+            metrics.push("cycles");
+        }
+        if self.misses {
+            metrics.push("misses");
+        }
+        if self.cstates {
+            metrics.push("cstates");
+        }
         metrics.join(",")
     }
 
@@ -125,15 +133,20 @@ impl MeasureCommand {
 
         let affinity_str = affinity
             .as_ref()
-            .map(|a| a.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","))
+            .map(|a| {
+                a.iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
             .unwrap_or_else(|| "-".to_string());
-        let niceness_str =nice 
+        let nice_str = nice
             .map(|n| n.to_string())
             .unwrap_or_else(|| "-".to_string());
 
         info!(
             "[{} | {} | {} | {} | {}@{}]",
-            scenario.language, scenario.name, test_name, mode, niceness_str, affinity_str
+            scenario.language, scenario.name, test_name, mode, nice_str, affinity_str
         );
         info!("  Build started");
 
@@ -165,8 +178,19 @@ impl MeasureCommand {
             }
         }
 
-        info!("  Test started ({} runs, {} internal runs)", runs, internal_runs);
-        Self::measure(scenario, &test, runs, internal_runs, cooldown, metrics, output_dir)?;
+        info!(
+            "  Test started ({} runs, {} internal runs)",
+            runs, internal_runs
+        );
+        Self::measure(
+            scenario,
+            &test,
+            runs,
+            internal_runs,
+            cooldown,
+            metrics,
+            output_dir,
+        )?;
         info!("  Test completed");
 
         Ok(())
@@ -200,7 +224,12 @@ impl MeasureCommand {
             .affinity
             .as_ref()
             .or(scenario.affinity.as_ref())
-            .map(|a| a.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(","));
+            .map(|a| {
+                a.iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            });
         let nice = test.nice.or(scenario.nice);
 
         let csv_path = output_dir.join("measurements.csv");
@@ -282,10 +311,14 @@ impl MeasureCommand {
 
             let output = match mode {
                 MeasurementMode::Process => {
-                    unsafe { std::env::set_var("LG_OUTPUT", &measurement_path); }
+                    unsafe {
+                        std::env::set_var("LG_OUTPUT", &measurement_path);
+                    }
                     let _context = Measurement::start(&metrics_str);
                     let result = child.wait_with_output()?;
-                    unsafe { std::env::remove_var("LG_OUTPUT"); }
+                    unsafe {
+                        std::env::remove_var("LG_OUTPUT");
+                    }
                     result
                 }
                 MeasurementMode::Internal => child.wait_with_output()?,
@@ -320,3 +353,4 @@ impl MeasureCommand {
         Ok(())
     }
 }
+

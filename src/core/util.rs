@@ -1,6 +1,6 @@
 use base64::Engine;
 use green::measurements::{self, MeasurementContext};
-use serde::{Deserialize, Deserializer, Serializer, de};
+use serde::{de, Deserialize, Deserializer, Serializer};
 use serde_yaml_ng::Value;
 use std::ffi::CString;
 
@@ -72,3 +72,4 @@ impl Drop for Measurement {
         }
     }
 }
+

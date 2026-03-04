@@ -47,11 +47,9 @@ code: |
         let metrics = CString::new(args[3].as_str()).expect("Invalid metrics string");
 
         for _ in 0..internal_runs {
-            unsafe {
-                let context = measure_start(metrics.as_ptr());
-                run_benchmark(degree, x);
-                measure_stop(context);
-            }
+            let context = unsafe { measure_start(metrics.as_ptr()) };
+            run_benchmark(degree, x);
+            unsafe { measure_stop(context) };
         }
     }
 arguments: [1000, 0.5]

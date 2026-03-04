@@ -1,6 +1,6 @@
 use super::util::java_cp;
 use super::{Language, MeasurementMode, Scenario, ScenarioError, ScenarioResult, Test};
-use nix::sched::{CpuSet, sched_setaffinity};
+use nix::sched::{sched_setaffinity, CpuSet};
 use nix::unistd::Pid;
 use serde::Deserialize;
 use serde_yaml_ng::Deserializer;
@@ -560,3 +560,4 @@ path = "main.rs"
         Ok(())
     }
 }
+
