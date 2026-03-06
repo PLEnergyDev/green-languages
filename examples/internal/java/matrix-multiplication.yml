@@ -1,0 +1,78 @@
+name: matrix-multiplication
+language: java
+description: |
+    Create two square matrices of size N×N.
+    Each cell within these two matrices will be initialized with the sum of their row and column indices.
+    Multiply the two matrices and output the contents of the last cell.
+libgreen: true
+code: |
+    class Green {
+        static { System.loadLibrary("green"); }
+        public native long measureStart(String events);
+        public native void measureStop(long context);
+    }
+
+    public class Program {
+        static void run_benchmark(int n) {
+            double[] A = new double[n * n];
+            double[] B = new double[n * n];
+            double[] C = new double[n * n];
+
+            for (int i = 0; i < n; i++) {
+                for (int j = 0; j < n; j++) {
+                    A[i*n + j] = B[i*n + j] = i + j;
+                }
+            }
+
+            double totalResult = 0.0;
+            for (int r = 0; r < 1000; r++) {
+                for (int i = 0; i < n; i++) {
+                    for (int j = 0; j < n; j++) {
+                        double sum = 0.0;
+                        for (int k = 0; k < n; k++) {
+                            sum += A[i*n + k] * B[k*n + j];
+                        }
+                        C[i*n + j] = sum;
+                    }
+                }
+                totalResult += C[n*n - 1];
+            }
+
+            System.out.printf("%.0f\n", totalResult / 1000);
+        }
+
+        public static void main(String[] args) {
+            if (args.length < 3) {
+                System.err.println("Usage: <program> <n> <internal_runs> <metrics>");
+                System.exit(1);
+            }
+
+            int n = Integer.parseInt(args[0]);
+            int internal_runs = Integer.parseInt(args[1]);
+            String metrics = args[2];
+
+            Green green = new Green();
+
+            for (int i = 0; i < internal_runs; i++) {
+                long context = green.measureStart(metrics);
+                run_benchmark(n);
+                green.measureStop(context);
+            }
+        }
+    }
+arguments: [200]
+compile_options: [-server]
+expected_stdout: !!binary MTg0ODcxMDAK
+---
+name: server
+---
+name: server
+nice: -20
+---
+name: server
+affinity: [5]
+---
+name: server
+nice: -20
+affinity: [5]
+

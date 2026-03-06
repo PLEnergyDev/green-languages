@@ -66,4 +66,14 @@ compile_options: [--release]
 expected_stdout: !!binary MTg0ODcxMDAK
 ---
 name: release
+---
+name: release
+nice: -20
+---
+name: release
+affinity: [5]
+---
+name: release
+nice: -20
+affinity: [5]
 

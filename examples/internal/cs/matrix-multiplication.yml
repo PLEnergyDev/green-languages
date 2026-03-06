@@ -1,18 +1,21 @@
 name: matrix-multiplication
-language: java
+language: cs
 description: |
     Create two square matrices of size N×N.
     Each cell within these two matrices will be initialized with the sum of their row and column indices.
     Multiply the two matrices and output the contents of the last cell.
 libgreen: true
 code: |
-    class Green {
-        static { System.loadLibrary("green"); }
-        public native long measureStart(String events);
-        public native void measureStop(long context);
-    }
+    using System;
+    using System.Runtime.InteropServices;
 
     public class Program {
+        [DllImport("libgreen", EntryPoint = "measure_start")]
+        public static extern IntPtr measure_start([MarshalAs(UnmanagedType.LPStr)] string metrics);
+
+        [DllImport("libgreen", EntryPoint = "measure_stop")]
+        public static extern void measure_stop(IntPtr context);
+
         static void run_benchmark(int n) {
             double[] A = new double[n * n];
             double[] B = new double[n * n];
@@ -38,31 +41,49 @@ code: |
                 totalResult += C[n*n - 1];
             }
 
-            System.out.printf("%.0f\n", totalResult / 1000);
+            Console.WriteLine($"{totalResult / 1000:F0}");
         }
 
-        public static void main(String[] args) {
-            if (args.length < 3) {
-                System.err.println("Usage: <program> <n> <internal_runs> <metrics>");
-                System.exit(1);
+        public static void Main(string[] args) {
+            if (args.Length < 3) {
+                Console.Error.WriteLine("Usage: <program> <n> <internal_runs> <metrics>");
+                Environment.Exit(1);
             }
 
-            int n = Integer.parseInt(args[0]);
-            int internal_runs = Integer.parseInt(args[1]);
-            String metrics = args[2];
-
-            Green green = new Green();
+            int n = int.Parse(args[0]);
+            int internal_runs = int.Parse(args[1]);
+            string metrics = args[2];
 
             for (int i = 0; i < internal_runs; i++) {
-                long context = green.measureStart(metrics);
+                IntPtr context = measure_start(metrics);
                 run_benchmark(n);
-                green.measureStop(context);
+                measure_stop(context);
             }
         }
     }
+framework: net9.0
+compile_options:
+    - -c Release
+    - -p:ImplicitUsings=enable
+    - -p:Nullable=enable
+    - -p:AllowUnsafeBlocks=true
+    - -p:ServerGarbageCollection=true
+    - -p:ConcurrentGarbageCollection=true
+    - -p:UseSharedCompilation=false
+    - -p:OptimizationPreference=Speed
+    - -p:IlcInstructionSet=native
 arguments: [200]
-compile_options: [-server]
 expected_stdout: !!binary MTg0ODcxMDAK
 ---
-name: server
+name: release
+---
+name: release
+nice: -20
+---
+name: release
+affinity: [5]
+---
+name: release
+nice: -20
+affinity: [5]
 

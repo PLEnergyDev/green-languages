@@ -1,5 +1,5 @@
 name: polynomial-evaluation
-language: cs
+language: java
 description: |
     This benchmark implements polynomial evaluation using Horner's rule.
     A polynomial of degree n has the form: c₀ + c₁x + c₂x² + ... + cₙxⁿ
@@ -8,16 +8,13 @@ description: |
     This requires only n multiplications and n additions, making it much more efficient.
 libgreen: true
 code: |
-    using System;
-    using System.Runtime.InteropServices;
+    class Green {
+        static { System.loadLibrary("green"); }
+        public native long measureStart(String events);
+        public native void measureStop(long context);
+    }
 
     public class Program {
-        [DllImport("libgreen", EntryPoint = "measure_start")]
-        public static extern IntPtr measure_start([MarshalAs(UnmanagedType.LPStr)] string metrics);
-
-        [DllImport("libgreen", EntryPoint = "measure_stop")]
-        public static extern void measure_stop(IntPtr context);
-
         static void run_benchmark(int degree, double x) {
             double[] coeffs = new double[degree + 1];
             for (int i = 0; i <= degree; i++) {
@@ -33,39 +30,42 @@ code: |
                 totalResult += result;
             }
 
-            Console.WriteLine($"{totalResult / 1000000:F6}");
+            System.out.printf("%.6f\n", totalResult / 1000000);
         }
 
-        public static void Main(string[] args) {
-            if (args.Length < 4) {
-                Console.Error.WriteLine("Usage: <program> <degree> <x> <internal_runs> <metrics>");
-                Environment.Exit(1);
+        public static void main(String[] args) {
+            if (args.length < 4) {
+                System.err.println("Usage: <program> <degree> <x> <internal_runs> <metrics>");
+                System.exit(1);
             }
 
-            int degree = int.Parse(args[0]);
-            double x = double.Parse(args[1]);
-            int internal_runs = int.Parse(args[2]);
-            string metrics = args[3];
+            int degree = Integer.parseInt(args[0]);
+            double x = Double.parseDouble(args[1]);
+            int internal_runs = Integer.parseInt(args[2]);
+            String metrics = args[3];
+
+            Green green = new Green();
 
             for (int i = 0; i < internal_runs; i++) {
-                IntPtr context = measure_start(metrics);
+                long context = green.measureStart(metrics);
                 run_benchmark(degree, x);
-                measure_stop(context);
+                green.measureStop(context);
             }
         }
     }
-framework: net10.0
-compile_options:
-    - -c Release
-    - -p:ImplicitUsings=enable
-    - -p:Nullable=enable
-    - -p:AllowUnsafeBlocks=true
-    - -p:ServerGarbageCollection=true
-    - -p:ConcurrentGarbageCollection=true
-    - -p:OptimizationPreference=Speed
-    - -p:IlcInstructionSet=native
 arguments: [1000, 0.5]
+compile_options: [-server]
 expected_stdout: !!binary MS4zODYyOTQK
 ---
-name: optimized
+name: server
+---
+name: server
+nice: -20
+---
+name: server
+affinity: [5]
+---
+name: server
+nice: -20
+affinity: [5]
 

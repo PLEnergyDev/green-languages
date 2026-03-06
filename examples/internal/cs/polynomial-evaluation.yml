@@ -1,0 +1,82 @@
+name: polynomial-evaluation
+language: cs
+description: |
+    This benchmark implements polynomial evaluation using Horner's rule.
+    A polynomial of degree n has the form: c₀ + c₁x + c₂x² + ... + cₙxⁿ
+    Instead of calculating each power of x separately (which would require n(n+1)/2 multiplications),
+    Horner's rule rearranges the calculation to: c₀ + x(c₁ + x(c₂ + ... + x(cₙ₋₁ + xcₙ)...))
+    This requires only n multiplications and n additions, making it much more efficient.
+libgreen: true
+code: |
+    using System;
+    using System.Runtime.InteropServices;
+
+    public class Program {
+        [DllImport("libgreen", EntryPoint = "measure_start")]
+        public static extern IntPtr measure_start([MarshalAs(UnmanagedType.LPStr)] string metrics);
+
+        [DllImport("libgreen", EntryPoint = "measure_stop")]
+        public static extern void measure_stop(IntPtr context);
+
+        static void run_benchmark(int degree, double x) {
+            double[] coeffs = new double[degree + 1];
+            for (int i = 0; i <= degree; i++) {
+                coeffs[degree - i] = 1.0 / (i + 1);
+            }
+
+            double totalResult = 0.0;
+            for (int r = 0; r < 1000000; r++) {
+                double result = 0.0;
+                for (int i = 0; i <= degree; i++) {
+                    result = coeffs[i] + x * result;
+                }
+                totalResult += result;
+            }
+
+            Console.WriteLine($"{totalResult / 1000000:F6}");
+        }
+
+        public static void Main(string[] args) {
+            if (args.Length < 4) {
+                Console.Error.WriteLine("Usage: <program> <degree> <x> <internal_runs> <metrics>");
+                Environment.Exit(1);
+            }
+
+            int degree = int.Parse(args[0]);
+            double x = double.Parse(args[1]);
+            int internal_runs = int.Parse(args[2]);
+            string metrics = args[3];
+
+            for (int i = 0; i < internal_runs; i++) {
+                IntPtr context = measure_start(metrics);
+                run_benchmark(degree, x);
+                measure_stop(context);
+            }
+        }
+    }
+framework: net9.0
+compile_options:
+    - -c Release
+    - -p:ImplicitUsings=enable
+    - -p:Nullable=enable
+    - -p:AllowUnsafeBlocks=true
+    - -p:ServerGarbageCollection=true
+    - -p:ConcurrentGarbageCollection=true
+    - -p:UseSharedCompilation=false
+    - -p:OptimizationPreference=Speed
+    - -p:IlcInstructionSet=native
+arguments: [1000, 0.5]
+expected_stdout: !!binary MS4zODYyOTQK
+---
+name: release
+---
+name: release
+nice: -20
+---
+name: release
+affinity: [5]
+---
+name: release
+nice: -20
+affinity: [5]
+

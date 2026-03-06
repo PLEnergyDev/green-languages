@@ -26,17 +26,23 @@ fibonacci,c,1,,,process,5,1,55524,1.073,0.74,0.004,,2.037,,,,,,,,,,,,,,177253875
 
 ## Available Performance Metric Bundles
 
-| Bundle      | Metric                                     | Unit   | Scope       |
-| ----------- | ------------------------------------------ | ------ | ----------- |
-|             | Wall-Clock Time (Always Enabled)           | Micros | System-Wide |
-| `--rapl`    | RAPL Energy Domains                        | Joules | System-Wide |
-| `--cycles`  | CPU Cycles                                 | Count  | Process     |
-| `--misses`  | L1D, L1I, LLC Loads Misses & Branch Misses | Count  | Process     |
-| `--cstates` | CPU Low Power C-States (CPU Idling)        | Micros | System-Wide |
+| Bundle      | Metric                              | Unit   | Scope       |
+| ----------- | ----------------------------------- | ------ | ----------- |
+|             | Wall-Clock Time (Always Enabled)    | Micros | System-Wide |
+| `--rapl`    | RAPL Energy Domains                 | Joules | System-Wide |
+| `--cycles`  | CPU Cycles                          | Count  | Process     |
+| `--misses`  | L1D, L1I, LLC Loads, Branch Misses  | Count  | Process     |
+| `--cstates` | CPU Low Power C-States (CPU Idling) | Micros | System-Wide |
 
 ## Scenarios
 
-A scenario is a **YAML file** holding data to execute a program written in a programming language. A basic example of a scenario written in C is shown. Per default, it measures the performance metrics of the whole process.
+**Check some [examples](examples).**
+
+**Check the complete set of scenarios [green-languages-scenarios](https://github.com/PLEnergyDev/green-languages-scenarios).**
+
+A scenario is a **YAML file** holding data to execute a program written in a programming language.
+
+A basic example of a scenario written in C is shown. Per default, it measures the performance metrics of the whole process.
 
 ```yml
 name: fibonacci
@@ -153,6 +159,12 @@ int main(int argc, char **argv) {
 ### Java
 
 ```java
+class Green {
+    static { System.loadLibrary("green"); }
+    public native long measureStart(String events);
+    public native void measureStop(long context);
+}
+
 public static void main(final String[] args) {
     int internal_runs = Integer.parseInt(args[0]);
     String metrics = args[1];
@@ -208,11 +220,9 @@ class Program {
         let metrics = CString::new(args[1].as_str()).expect("Invalid metrics string");
 
         for _ in 0..internal_runs {
-            unsafe {
-                let context = measure_start(metrics.as_ptr());
-                // Code segment to measure
-                measure_stop(context);
-            }
+            let context = unsafe { measure_start(metrics.as_ptr()) };
+            run_benchmark(m);
+            unsafe { measure_stop(context) };
         }
     }
 ```
@@ -231,7 +241,9 @@ class Program {
 
 ## Tests
 
-To define multiple tests within for same scenario, enumerate the tests at the end of the file using `---` as delimiter. The example also shows how to pass compile time arguments and input, and how to verify if the output of the program is correct. 
+To define multiple tests within for same scenario, enumerate the tests at the end of the file using `---` as delimiter.
+
+The example also shows how to pass compile time arguments and how to verify that the program output is correct.
 
 > [!IMPORTANT]
 > A current limitation is that `expected_stdout` must be in `base64` format:

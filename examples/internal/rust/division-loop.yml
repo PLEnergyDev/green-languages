@@ -2,8 +2,8 @@ name: division-loop
 language: rust
 description: |
     Consider for a given M the problem of finding the least integer n such that 1/1 + 1/2 + 1/3 + ... + 1/n >= M.
-    For M = 20 the answer is n = 272400600 and the loop performs that many iterations.
-    Each iteration involves a floating-point comparison, a floating-point division and a floating-point addition, as well as an integer increment.
+    For M = 20 the answer is n = 272400600 and the loop performs that many runs.
+    Each run involves a floating-point comparison, a floating-point division and a floating-point addition, as well as an integer increment.
 libgreen: true
 code: |
     use std::ffi::CString;
@@ -46,4 +46,14 @@ compile_options: [--release]
 expected_stdout: !!binary MjcyNDAwNjAwCg==
 ---
 name: release
+---
+name: release
+nice: -20
+---
+name: release
+affinity: [5]
+---
+name: release
+nice: -20
+affinity: [5]
 

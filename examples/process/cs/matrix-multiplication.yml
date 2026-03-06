@@ -4,19 +4,13 @@ description: |
     Create two square matrices of size N×N.
     Each cell within these two matrices will be initialized with the sum of their row and column indices.
     Multiply the two matrices and output the contents of the last cell.
-libgreen: true
 code: |
     using System;
-    using System.Runtime.InteropServices;
 
     public class Program {
-        [DllImport("libgreen", EntryPoint = "measure_start")]
-        public static extern IntPtr measure_start([MarshalAs(UnmanagedType.LPStr)] string metrics);
+        public static void Main(string[] args) {
+            int n = int.Parse(args[0]);
 
-        [DllImport("libgreen", EntryPoint = "measure_stop")]
-        public static extern void measure_stop(IntPtr context);
-
-        static void run_benchmark(int n) {
             double[] A = new double[n * n];
             double[] B = new double[n * n];
             double[] C = new double[n * n];
@@ -27,8 +21,8 @@ code: |
                 }
             }
 
-            double totalResult = 0.0;
-            for (int r = 0; r < 1000; r++) {
+            double result = 0.0;
+            for (int rep = 0; rep < 1000; rep++) {
                 for (int i = 0; i < n; i++) {
                     for (int j = 0; j < n; j++) {
                         double sum = 0.0;
@@ -38,30 +32,13 @@ code: |
                         C[i*n + j] = sum;
                     }
                 }
-                totalResult += C[n*n - 1];
+                result += C[n*n - 1];
             }
 
-            Console.WriteLine($"{totalResult / 1000:F0}");
-        }
-
-        public static void Main(string[] args) {
-            if (args.Length < 3) {
-                Console.Error.WriteLine("Usage: <program> <n> <internal_runs> <metrics>");
-                Environment.Exit(1);
-            }
-
-            int n = int.Parse(args[0]);
-            int internal_runs = int.Parse(args[1]);
-            string metrics = args[2];
-
-            for (int i = 0; i < internal_runs; i++) {
-                IntPtr context = measure_start(metrics);
-                run_benchmark(n);
-                measure_stop(context);
-            }
+            Console.WriteLine($"{result / 1000:F0}");
         }
     }
-framework: net10.0
+framework: net9.0
 compile_options:
     - -c Release
     - -p:ImplicitUsings=enable
@@ -69,10 +46,21 @@ compile_options:
     - -p:AllowUnsafeBlocks=true
     - -p:ServerGarbageCollection=true
     - -p:ConcurrentGarbageCollection=true
+    - -p:UseSharedCompilation=false
     - -p:OptimizationPreference=Speed
     - -p:IlcInstructionSet=native
 arguments: [200]
 expected_stdout: !!binary MTg0ODcxMDAK
 ---
-name: optimized
+name: release
+---
+name: release
+nice: -20
+---
+name: release
+affinity: [5]
+---
+name: release
+nice: -20
+affinity: [5]
 

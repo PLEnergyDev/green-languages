@@ -4,13 +4,13 @@ description: |
     Create two square matrices of size N×N.
     Each cell within these two matrices will be initialized with the sum of their row and column indices.
     Multiply the two matrices and output the contents of the last cell.
-libgreen: true
 code: |
     #include <stdio.h>
     #include <stdlib.h>
-    #include <green.h>
 
-    void run_benchmark(int n) {
+    int main(int argc, char **argv) {
+        int n = atoi(argv[1]);
+
         double *A = malloc(n * n * sizeof(double));
         double *B = malloc(n * n * sizeof(double));
         double *C = malloc(n * n * sizeof(double));
@@ -39,24 +39,6 @@ code: |
         free(C);
 
         printf("%.0f\n", result / 1000);
-    }
-
-    int main(int argc, char **argv) {
-        if (argc < 4) {
-            fprintf(stderr, "Usage: %s <n> <internal_runs> <metrics>\n", argv[0]);
-            return 1;
-        }
-
-        int n = atoi(argv[1]);
-        int internal_runs = atoi(argv[2]);
-        const char *metrics = argv[3];
-
-        for (int i = 0; i < internal_runs; i++) {
-            void *context = measure_start(metrics);
-            run_benchmark(n);
-            measure_stop(context);
-        }
-
         return 0;
     }
 arguments: [200]
@@ -64,4 +46,14 @@ compile_options: [-pipe, -O3, -march=native, -fomit-frame-pointer]
 expected_stdout: !!binary MTg0ODcxMDAK
 ---
 name: optimized
+---
+name: optimized
+nice: -20
+---
+name: optimized
+affinity: [5]
+---
+name: optimized
+nice: -20
+affinity: [5]
 
