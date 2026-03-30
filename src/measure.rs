@@ -267,6 +267,7 @@ impl MeasureCommand {
                 llc_misses: raw.llc_misses,
                 branch_misses: raw.branch_misses,
                 c1_core_residency: raw.c1_core_residency,
+                c3_core_residency: raw.c3_core_residency,
                 c6_core_residency: raw.c6_core_residency,
                 c7_core_residency: raw.c7_core_residency,
                 c2_pkg_residency: raw.c2_pkg_residency,

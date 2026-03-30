@@ -2,7 +2,7 @@
 
 `green-languages` is a CLI tool that measures the energy use (in Joules) and other performance metrics of whole programs or individual code sections across different programming languages. It provides start/end markers to wrap the code sections you want to measure.
 
-`green-languages` is also capable to keeping track of multiple repeated internal runs in a loop to detect performance changes during program runtime.
+`green-languages` is also capable to keeping track of repeated internal runs in a loop to detect performance changes during program runtime.
 
 ## Usage
 
@@ -15,24 +15,28 @@ green-languages fibonacci.yml --runs 5 --rapl
 If the program builds and executes successfully `measurements.csv` is created:
 
 ```csv
-scenario,language,test,nice,affinity,mode,run,internal_run,time,pkg,cores,gpu,ram,psys,cycles,l1d_misses,l1i_misses,llc_misses,branch_misses,c1_core_residency,c6_core_residency,c7_core_residency,c2_pkg_residency,c3_pkg_residency,c6_pkg_residency,c8_pkg_residency,c10_pkg_residency,ended
-fibonacci,c,1,,,process,1,1,55321,,,,,,,,,,,,,,,,,,,1772538726074754
-fibonacci,c,1,,,process,1,1,51896,1.21,0.815,0.002,,2.134,,,,,,,,,,,,,,1772538757758410
-fibonacci,c,1,,,process,2,1,58293,1.237,0.789,0.002,,2.266,,,,,,,,,,,,,,1772538757817866
-fibonacci,c,1,,,process,3,1,53568,1.099,0.756,0.004,,2.025,,,,,,,,,,,,,,1772538757872790
-fibonacci,c,1,,,process,4,1,56539,0.771,0.521,0.001,,1.632,,,,,,,,,,,,,,1772538757930733
-fibonacci,c,1,,,process,5,1,55524,1.073,0.74,0.004,,2.037,,,,,,,,,,,,,,1772538757987432
+scenario,language,test,nice,affinity,mode,run,internal_run,time,pkg,cores,gpu,ram,psys,cycles,l1d_misses,l1i_misses,llc_misses,branch_misses,c1_core_residency,c3_core_residency,c6_core_residency,c7_core_residency,c2_pkg_residency,c3_pkg_residency,c6_pkg_residency,c8_pkg_residency,c10_pkg_residency,ended
+fibonacci,c,1,,,process,1,1,55321,,,,,,,,,,,,,,,,,,,,1772538726074754
+fibonacci,c,1,,,process,1,1,51896,1.21,0.815,0.002,,2.134,,,,,,,,,,,,,,,1772538757758410
+fibonacci,c,1,,,process,2,1,58293,1.237,0.789,0.002,,2.266,,,,,,,,,,,,,,,1772538757817866
+fibonacci,c,1,,,process,3,1,53568,1.099,0.756,0.004,,2.025,,,,,,,,,,,,,,,1772538757872790
+fibonacci,c,1,,,process,4,1,56539,0.771,0.521,0.001,,1.632,,,,,,,,,,,,,,,1772538757930733
+fibonacci,c,1,,,process,5,1,55524,1.073,0.74,0.004,,2.037,,,,,,,,,,,,,,,1772538757987432
 ```
 
 ## Available Performance Metric Bundles
 
-| Bundle      | Metric                              | Unit   | Scope       |
-| ----------- | ----------------------------------- | ------ | ----------- |
-|             | Wall-Clock Time (Always Enabled)    | Micros | System-Wide |
-| `--rapl`    | RAPL Energy Domains                 | Joules | System-Wide |
-| `--cycles`  | CPU Cycles                          | Count  | Process     |
-| `--misses`  | L1D, L1I, LLC Loads, Branch Misses  | Count  | Process     |
-| `--cstates` | CPU Low Power C-States (CPU Idling) | Micros | System-Wide |
+> [!NOTE]
+> All metrics in the bundles are obtained at the **domain-level**,
+> regardless whether the metric supports a finer-grained measurement level e.g., **process-level.**
+
+| Bundle      | Metric                           | Unit   |
+| ----------- | -------------------------------- | ------ |
+|             | Wall-Clock Time (Always Enabled) | Micros |
+| `--rapl`    | RAPL Energy Domains              | Joules |
+| `--cycles`  | CPU Cycles                       | Count  |
+| `--misses`  | L1D, L1I, LLC, Branch Misses     | Count  |
+| `--cstates` | CPU Low Power C-States           | Micros |
 
 ## Scenarios
 
