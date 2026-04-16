@@ -1,9 +1,10 @@
 use super::util::java_cp;
 use super::{Language, MeasurementMode, Scenario, ScenarioError, ScenarioResult, Test};
-use nix::sched::{sched_setaffinity, CpuSet};
+use nix::sched::{CpuSet, sched_setaffinity};
 use nix::unistd::Pid;
 use serde::Deserialize;
 use serde_yaml_ng::Deserializer;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufReader, Error, ErrorKind, Read};
 use std::os::unix::process::CommandExt;
@@ -460,7 +461,7 @@ impl Scenario {
                 Ok(_) => {
                     if buffer != expected {
                         let err = format!(
-                            "test '{}' got unexpected stdout for iteration {}: content unequal",
+                            "test '{}' got unexpected stdout for run {}: content unequal",
                             test.name.as_ref().unwrap_or(&"unknown".to_string()),
                             i + 1
                         );
@@ -469,7 +470,7 @@ impl Scenario {
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     let err = format!(
-                        "test '{}' got unexpected stdout for iteration {}: output too short",
+                        "test '{}' got unexpected stdout for run {}: output too short",
                         test.name.as_ref().unwrap_or(&"unknown".to_string()),
                         i + 1
                     );
@@ -489,6 +490,16 @@ impl Scenario {
             )),
             Err(e) => Err(ScenarioError::Io(e)),
         }
+    }
+
+    fn resolved_settings<'a>(&'a self, test: &'a Test) -> HashMap<String, String> {
+        let mut merged = self.settings.clone().unwrap_or_default();
+        if let Some(test_settings) = &test.settings {
+            for (k, v) in test_settings {
+                merged.insert(k.clone(), v.clone());
+            }
+        }
+        merged
     }
 
     fn prepare_cs_build(&self, test: &Test, output_dir: &Path) -> Result<(), ScenarioError> {
@@ -512,14 +523,21 @@ impl Scenario {
             }
         }
 
+        let settings = self.resolved_settings(test);
+        let mut settings_formatted = String::new();
+        for (key, value) in &settings {
+            settings_formatted.push_str(&format!("    <{}>{}</{}>\n", key, value, key));
+        }
+
         let csproj_content = format!(
             r#"<Project Sdk="Microsoft.NET.Sdk">
-               <PropertyGroup>
-                   <TargetFramework>{}</TargetFramework>
-               </PropertyGroup>
-               <ItemGroup>{}</ItemGroup>
-           </Project>"#,
-            framework, dep_formatted
+    <PropertyGroup>
+        <TargetFramework>{}</TargetFramework>
+        {}
+    </PropertyGroup>
+    <ItemGroup>{}</ItemGroup>
+</Project>"#,
+            framework, settings_formatted, dep_formatted
         );
 
         fs::write(&csproj_path, csproj_content)?;
@@ -538,11 +556,35 @@ impl Scenario {
             }
         }
 
+        let settings = self.resolved_settings(test);
+        let edition = settings
+            .get("edition")
+            .map(|s| s.as_str())
+            .unwrap_or("2024");
+
+        let mut profile_section = String::new();
+        let profile_settings: Vec<_> = settings
+            .iter()
+            .filter(|(k, _)| k.as_str() != "edition" && k.as_str() != "rustflags")
+            .collect();
+        if !profile_settings.is_empty() {
+            profile_section.push_str("\n[profile.release]\n");
+            for (key, value) in profile_settings {
+                let needs_quotes =
+                    value.parse::<f64>().is_err() && value != "true" && value != "false";
+                if needs_quotes {
+                    profile_section.push_str(&format!("{} = \"{}\"\n", key, value));
+                } else {
+                    profile_section.push_str(&format!("{} = {}\n", key, value));
+                }
+            }
+        }
+
         let toml_content = format!(
             r#"[package]
 name = "program"
 version = "0.1.0"
-edition = "2024"
+edition = "{}"
 
 [[bin]]
 name = "program"
@@ -550,13 +592,29 @@ path = "main.rs"
 
 [dependencies]
 {}
-
 [workspace]
-"#,
-            dep_formatted
+{}"#,
+            edition, dep_formatted, profile_section
         );
 
         fs::write(&toml_path, toml_content)?;
+
+        if let Some(rustflags) = settings.get("rustflags") {
+            let cargo_config_dir = self.scenario_dir(output_dir).join(".cargo");
+            fs::create_dir_all(&cargo_config_dir)?;
+            fs::write(
+                cargo_config_dir.join("config.toml"),
+                format!(
+                    "[build]\nrustflags = [{}]\n",
+                    rustflags
+                        .split_whitespace()
+                        .map(|f| format!("\"{}\"", f))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            )?;
+        }
+
         Ok(())
     }
 }

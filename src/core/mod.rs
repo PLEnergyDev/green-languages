@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use strum::{Display, EnumIter, EnumString};
 use thiserror::Error;
@@ -15,12 +16,6 @@ pub enum Language {
     Rust,
     Python,
     Ruby,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct Package {
-    pub name: String,
-    pub version: Option<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -47,6 +42,7 @@ pub struct Scenario {
     pub compile_options: Option<Vec<String>>,
     pub runtime_options: Option<Vec<String>>,
     pub dependencies: Option<Vec<Dependency>>,
+    pub settings: Option<HashMap<String, String>>,
     pub affinity: Option<Vec<usize>>,
     pub nice: Option<i32>,
     pub libgreen: Option<bool>,
@@ -102,6 +98,7 @@ pub struct Test {
     pub compile_options: Option<Vec<String>>,
     pub runtime_options: Option<Vec<String>>,
     pub dependencies: Option<Vec<Dependency>>,
+    pub settings: Option<HashMap<String, String>>,
     pub affinity: Option<Vec<usize>>,
     pub nice: Option<i32>,
     #[serde(default, deserialize_with = "deserialize_args")]
