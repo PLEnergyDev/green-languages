@@ -60,7 +60,7 @@ pub struct Measurement {
     pub scenario: String,
     pub language: String,
     pub test: String,
-    pub nice: Option<i32>,
+    pub niceness: Option<i32>,
     pub affinity: Option<String>,
     pub mode: MeasurementMode,
     pub run: usize,

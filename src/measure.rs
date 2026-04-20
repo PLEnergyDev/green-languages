@@ -129,7 +129,7 @@ impl MeasureCommand {
         };
 
         let affinity = test.affinity.clone().or(scenario.affinity.clone());
-        let nice = test.nice.or(scenario.nice);
+        let niceness = test.niceness.or(scenario.niceness);
 
         let affinity_str = affinity
             .as_ref()
@@ -140,13 +140,13 @@ impl MeasureCommand {
                     .join(",")
             })
             .unwrap_or_else(|| "-".to_string());
-        let nice_str = nice
+        let niceness_str = niceness
             .map(|n| n.to_string())
             .unwrap_or_else(|| "-".to_string());
 
         info!(
             "[{} | {} | {} | {} | {}@{}]",
-            scenario.language, scenario.name, test_name, mode, nice_str, affinity_str
+            scenario.language, scenario.name, test_name, mode, niceness_str, affinity_str
         );
         info!("  Build started");
 
@@ -230,7 +230,7 @@ impl MeasureCommand {
                     .collect::<Vec<_>>()
                     .join(",")
             });
-        let nice = test.nice.or(scenario.nice);
+        let niceness = test.niceness.or(scenario.niceness);
 
         let csv_path = output_dir.join("measurements.csv");
         let file_exists = csv_path.exists();
@@ -250,7 +250,7 @@ impl MeasureCommand {
                 scenario: scenario.name.clone(),
                 language: scenario.language.to_string(),
                 test: test.name.clone().unwrap_or_default(),
-                nice: nice,
+                niceness: niceness,
                 affinity: affinity.clone(),
                 mode,
                 run,
