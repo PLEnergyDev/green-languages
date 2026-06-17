@@ -15,8 +15,6 @@ pub struct MeasureCommand {
     #[arg(short, long)]
     pub output: Option<PathBuf>,
     #[arg(short, long, default_value = "1")]
-    pub runs: usize,
-    #[arg(short, long, default_value = "1")]
     pub internal_runs: usize,
     #[arg(short, long, default_value = "0")]
     pub cooldown: u64,
@@ -63,7 +61,6 @@ pub struct Measurement {
     pub niceness: Option<i32>,
     pub affinity: Option<String>,
     pub mode: MeasurementMode,
-    pub run: usize,
     pub internal_run: usize,
     pub time: Option<u64>,
     pub pkg: Option<f64>,

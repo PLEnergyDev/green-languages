@@ -46,7 +46,6 @@ impl MeasureCommand {
                 if let Err(err) = Self::process_test(
                     &mut scenario,
                     Test::default(),
-                    args.runs,
                     args.internal_runs,
                     args.cooldown,
                     &metrics,
@@ -63,7 +62,6 @@ impl MeasureCommand {
                     if let Err(err) = Self::process_test(
                         &mut scenario,
                         test,
-                        args.runs,
                         args.internal_runs,
                         args.cooldown,
                         &metrics,
@@ -114,7 +112,6 @@ impl MeasureCommand {
     fn process_test(
         scenario: &mut Scenario,
         mut test: Test,
-        runs: usize,
         internal_runs: usize,
         cooldown: u64,
         metrics: &str,
@@ -178,14 +175,10 @@ impl MeasureCommand {
             }
         }
 
-        info!(
-            "  Test started ({} runs, {} internal runs)",
-            runs, internal_runs
-        );
+        info!("  Test started ({} internal runs)", internal_runs);
         Self::measure(
             scenario,
             &test,
-            runs,
             internal_runs,
             cooldown,
             metrics,
@@ -216,7 +209,6 @@ impl MeasureCommand {
         scenario: &Scenario,
         test: &Test,
         mode: MeasurementMode,
-        run: usize,
         measurement_path: &PathBuf,
         output_dir: &PathBuf,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -253,7 +245,6 @@ impl MeasureCommand {
                 niceness: niceness,
                 affinity: affinity.clone(),
                 mode,
-                run,
                 internal_run,
                 time: raw.time,
                 pkg: raw.pkg,
@@ -288,70 +279,61 @@ impl MeasureCommand {
     fn measure(
         scenario: &mut Scenario,
         test: &Test,
-        runs: usize,
         internal_runs: usize,
         cooldown: u64,
         metrics: &str,
         output_dir: &PathBuf,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        for run in 1..=runs {
-            if cooldown > 0 {
-                info!("    Cooldown {}ms", cooldown);
-                std::thread::sleep(std::time::Duration::from_millis(cooldown));
-            }
-
-            info!("    Run {}/{} started", run, runs);
-
-            let PreparedCommand {
-                mut command,
-                metrics: metrics_str,
-                measurement_path,
-                mode,
-            } = scenario.exec_command(test, internal_runs, metrics, output_dir)?;
-            let child = command.spawn()?;
-
-            let output = match mode {
-                MeasurementMode::Process => {
-                    unsafe {
-                        std::env::set_var("LG_OUTPUT", &measurement_path);
-                    }
-                    let _context = Measurement::start(&metrics_str);
-                    let result = child.wait_with_output()?;
-                    unsafe {
-                        std::env::remove_var("LG_OUTPUT");
-                    }
-                    result
-                }
-                MeasurementMode::Internal => child.wait_with_output()?,
-            };
-
-            if let Err(err) = Self::validate_output(&output) {
-                let _ = fs::remove_file(&measurement_path);
-                return Err(err);
-            }
-
-            if let Err(err) = Self::verify_output(scenario, test, internal_runs, output_dir) {
-                let _ = fs::remove_file(&measurement_path);
-                return Err(err);
-            }
-
-            if measurement_path.exists() {
-                if let Err(e) = Self::write_measurements(
-                    scenario,
-                    test,
-                    mode,
-                    run,
-                    &measurement_path,
-                    output_dir,
-                ) {
-                    error!("    Failed to write measurements: {}", e);
-                }
-            }
-
-            info!("    Run {}/{} completed", run, runs);
+        if cooldown > 0 {
+            info!("    Cooldown {}ms", cooldown);
+            std::thread::sleep(std::time::Duration::from_millis(cooldown));
         }
+
+        info!("    Execution started");
+
+        let PreparedCommand {
+            mut command,
+            metrics: metrics_str,
+            measurement_path,
+            mode,
+        } = scenario.exec_command(test, internal_runs, metrics, output_dir)?;
+        let child = command.spawn()?;
+
+        let output = match mode {
+            MeasurementMode::Process => {
+                unsafe {
+                    std::env::set_var("LG_OUTPUT", &measurement_path);
+                }
+                let _context = Measurement::start(&metrics_str);
+                let result = child.wait_with_output()?;
+                unsafe {
+                    std::env::remove_var("LG_OUTPUT");
+                }
+                result
+            }
+            MeasurementMode::Internal => child.wait_with_output()?,
+        };
+
+        if let Err(err) = Self::validate_output(&output) {
+            let _ = fs::remove_file(&measurement_path);
+            return Err(err);
+        }
+
+        if let Err(err) = Self::verify_output(scenario, test, internal_runs, output_dir) {
+            let _ = fs::remove_file(&measurement_path);
+            return Err(err);
+        }
+
+        if measurement_path.exists() {
+            if let Err(e) =
+                Self::write_measurements(scenario, test, mode, &measurement_path, output_dir)
+            {
+                error!("    Failed to write measurements: {}", e);
+            }
+        }
+
+        info!("    Execution completed");
 
         Ok(())
     }
 }
-

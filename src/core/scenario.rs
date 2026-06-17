@@ -124,6 +124,45 @@ impl Scenario {
         self.scenario_dir(output_dir).join("stdin.txt")
     }
 
+    fn build_stamp_path(&self, test: &Test, output_dir: &Path) -> PathBuf {
+        self.test_dir(test, output_dir).join(".built")
+    }
+
+    fn build_fingerprint(&self, test: &Test) -> String {
+        let compile_opts = test
+            .compile_options
+            .as_ref()
+            .or(self.compile_options.as_ref());
+
+        let deps = test.dependencies.as_ref().or(self.dependencies.as_ref());
+        let deps_str = deps
+            .map(|d| {
+                d.iter()
+                    .map(|dep| format!("{}@{:?}", dep.name, dep.version))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default();
+
+        let settings = self.resolved_settings(test);
+        let mut sorted_settings: Vec<_> = settings.iter().collect();
+        sorted_settings.sort_by_key(|(k, _)| k.as_str());
+        let settings_str = sorted_settings
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        format!(
+            "lang={}\ncode={}\nopts={:?}\ndeps={}\nsettings={}",
+            self.language,
+            self.code.as_deref().unwrap_or(""),
+            compile_opts,
+            deps_str,
+            settings_str,
+        )
+    }
+
     pub fn exec_command(
         &self,
         test: &Test,
@@ -370,6 +409,16 @@ impl Scenario {
             return Err(ScenarioError::MissingCode);
         }
 
+        let fingerprint = self.build_fingerprint(test);
+        let stamp_path = self.build_stamp_path(test, output_dir);
+        if stamp_path.exists() {
+            if let Ok(saved) = fs::read_to_string(&stamp_path) {
+                if saved == fingerprint {
+                    return Ok(ScenarioResult::success());
+                }
+            }
+        }
+
         let source_path = self.source_path(output_dir);
         let scenario_dir = self.scenario_dir(output_dir);
         let test_dir = self.test_dir(test, output_dir);
@@ -424,6 +473,7 @@ impl Scenario {
                     expected_stdout_data,
                 )?;
             }
+            fs::write(&stamp_path, &fingerprint)?;
             Ok(ScenarioResult::success_with(out, err))
         } else {
             test.stdin.take();
@@ -618,4 +668,3 @@ path = "main.rs"
         Ok(())
     }
 }
-

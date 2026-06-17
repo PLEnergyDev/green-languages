@@ -35,3 +35,4 @@ uninstall:
 
 .PHONY: all release uninstall
 .SILENT:
+
