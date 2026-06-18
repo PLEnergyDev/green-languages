@@ -57,12 +57,12 @@ expected_stdout: !!binary MS4zODYyOTQK
 name: optimized
 ---
 name: optimized
-nice: -20
+niceness: -20
 ---
 name: optimized
 affinity: [5]
 ---
 name: optimized
-nice: -20
+niceness: -20
 affinity: [5]
 

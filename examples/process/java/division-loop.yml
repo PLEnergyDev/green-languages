@@ -24,12 +24,12 @@ expected_stdout: !!binary MjcyNDAwNjAwCg==
 name: server
 ---
 name: server
-nice: -20
+niceness: -20
 ---
 name: server
 affinity: [5]
 ---
 name: server
-nice: -20
+niceness: -20
 affinity: [5]
 

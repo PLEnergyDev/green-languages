@@ -48,12 +48,12 @@ expected_stdout: !!binary MS4zODYyOTQK
 name: release
 ---
 name: release
-nice: -20
+niceness: -20
 ---
 name: release
 affinity: [5]
 ---
 name: release
-nice: -20
+niceness: -20
 affinity: [5]
 
