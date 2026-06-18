@@ -26,6 +26,10 @@ pub struct MeasureCommand {
     pub misses: bool,
     #[arg(long)]
     pub cstates: bool,
+    #[arg(long, value_delimiter = ',')]
+    pub affinity: Option<Vec<usize>>,
+    #[arg(long)]
+    pub niceness: Option<i32>,
 }
 
 #[derive(Debug, serde::Deserialize)]

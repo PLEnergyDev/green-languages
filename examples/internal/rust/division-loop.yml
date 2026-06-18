@@ -46,14 +46,4 @@ compile_options: [--release]
 expected_stdout: !!binary MjcyNDAwNjAwCg==
 ---
 name: release
----
-name: release
-niceness: -20
----
-name: release
-affinity: [5]
----
-name: release
-niceness: -20
-affinity: [5]
 

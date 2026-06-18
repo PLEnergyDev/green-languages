@@ -61,14 +61,4 @@ compile_options: [-pipe, -O3, -march=native, -fomit-frame-pointer]
 expected_stdout: !!binary MTg0ODcxMDAK
 ---
 name: optimized
----
-name: optimized
-niceness: -20
----
-name: optimized
-affinity: [5]
----
-name: optimized
-niceness: -20
-affinity: [5]
 

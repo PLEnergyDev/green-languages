@@ -69,14 +69,4 @@ arguments: [1000, 0.5]
 expected_stdout: !!binary MS4zODYyOTQK
 ---
 name: release
----
-name: release
-niceness: -20
----
-name: release
-affinity: [5]
----
-name: release
-niceness: -20
-affinity: [5]
 

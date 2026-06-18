@@ -169,14 +169,14 @@ impl Scenario {
         internal_runs: usize,
         metrics: &str,
         output_dir: &Path,
+        affinity: Option<Vec<usize>>,
+        niceness: Option<i32>,
     ) -> Result<PreparedCommand, ScenarioError> {
         let mode = if self.libgreen.unwrap_or(false) {
             MeasurementMode::Internal
         } else {
             MeasurementMode::Process
         };
-        let affinity = test.affinity.clone().or(self.affinity.clone());
-        let niceness = test.niceness.or(self.niceness);
 
         match self.language {
             Language::C | Language::Cpp | Language::Rust | Language::Cs => {
@@ -282,7 +282,6 @@ impl Scenario {
 
         let measurement_path = self.test_dir(test, output_dir).join("measurement.csv");
 
-        let affinity_clone = affinity.clone();
         let mut cmd = Command::new(&command[0]);
         cmd.args(&command[1..])
             .stdout(Stdio::from(stdout_file))
@@ -295,7 +294,7 @@ impl Scenario {
 
         unsafe {
             cmd.pre_exec(move || {
-                if let Some(cpus) = &affinity_clone {
+                if let Some(ref cpus) = affinity {
                     let mut cpu_set = CpuSet::new();
                     for &cpu in cpus {
                         cpu_set.set(cpu).map_err(|e| {
@@ -499,6 +498,12 @@ impl Scenario {
             return Ok(ScenarioResult::success());
         };
 
+        let effective_runs = if self.libgreen.unwrap_or(false) {
+            internal_runs
+        } else {
+            1
+        };
+
         let expected = std::fs::read(&expected_stdout_path)?;
         let expected_len = expected.len();
         let stdout_path = self.stdout_path(test, output_dir);
@@ -506,7 +511,7 @@ impl Scenario {
         let mut reader = BufReader::with_capacity(expected_len * 16, file);
         let mut buffer = vec![0u8; expected_len];
 
-        for i in 0..internal_runs {
+        for i in 0..effective_runs {
             match reader.read_exact(&mut buffer) {
                 Ok(_) => {
                     if buffer != expected {

@@ -26,8 +26,6 @@ impl Default for Test {
             runtime_options: None,
             dependencies: None,
             settings: None,
-            affinity: None,
-            niceness: None,
             arguments: None,
             stdin: None,
             expected_stdout: None,

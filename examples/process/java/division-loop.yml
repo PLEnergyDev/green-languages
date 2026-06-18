@@ -22,14 +22,4 @@ compile_options: [-server]
 expected_stdout: !!binary MjcyNDAwNjAwCg==
 ---
 name: server
----
-name: server
-niceness: -20
----
-name: server
-affinity: [5]
----
-name: server
-niceness: -20
-affinity: [5]
 

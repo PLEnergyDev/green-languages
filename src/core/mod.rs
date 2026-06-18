@@ -43,8 +43,6 @@ pub struct Scenario {
     pub runtime_options: Option<Vec<String>>,
     pub dependencies: Option<Vec<Dependency>>,
     pub settings: Option<HashMap<String, String>>,
-    pub affinity: Option<Vec<usize>>,
-    pub niceness: Option<i32>,
     pub libgreen: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub arguments: Option<Vec<String>>,
@@ -99,8 +97,6 @@ pub struct Test {
     pub runtime_options: Option<Vec<String>>,
     pub dependencies: Option<Vec<Dependency>>,
     pub settings: Option<HashMap<String, String>>,
-    pub affinity: Option<Vec<usize>>,
-    pub niceness: Option<i32>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub arguments: Option<Vec<String>>,
     #[serde(

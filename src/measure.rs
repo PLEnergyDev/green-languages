@@ -50,6 +50,8 @@ impl MeasureCommand {
                     args.cooldown,
                     &metrics,
                     &output_dir,
+                    args.affinity.clone(),
+                    args.niceness,
                 ) {
                     error!("{}", err);
                 }
@@ -66,6 +68,8 @@ impl MeasureCommand {
                         args.cooldown,
                         &metrics,
                         &output_dir,
+                        args.affinity.clone(),
+                        args.niceness,
                     ) {
                         error!("{}", err);
                     }
@@ -116,6 +120,8 @@ impl MeasureCommand {
         cooldown: u64,
         metrics: &str,
         output_dir: &PathBuf,
+        affinity: Option<Vec<usize>>,
+        niceness: Option<i32>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let test_name = test.name.as_ref().unwrap();
 
@@ -124,9 +130,6 @@ impl MeasureCommand {
         } else {
             MeasurementMode::Process
         };
-
-        let affinity = test.affinity.clone().or(scenario.affinity.clone());
-        let niceness = test.niceness.or(scenario.niceness);
 
         let affinity_str = affinity
             .as_ref()
@@ -183,6 +186,8 @@ impl MeasureCommand {
             cooldown,
             metrics,
             output_dir,
+            affinity,
+            niceness,
         )?;
         info!("  Test completed");
 
@@ -209,20 +214,17 @@ impl MeasureCommand {
         scenario: &Scenario,
         test: &Test,
         mode: MeasurementMode,
+        affinity: Option<&Vec<usize>>,
+        niceness: Option<i32>,
         measurement_path: &PathBuf,
         output_dir: &PathBuf,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let affinity = test
-            .affinity
-            .as_ref()
-            .or(scenario.affinity.as_ref())
-            .map(|a| {
-                a.iter()
-                    .map(|n| n.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            });
-        let niceness = test.niceness.or(scenario.niceness);
+        let affinity_str = affinity.map(|a| {
+            a.iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        });
 
         let csv_path = output_dir.join("measurements.csv");
         let file_exists = csv_path.exists();
@@ -242,8 +244,8 @@ impl MeasureCommand {
                 scenario: scenario.name.clone(),
                 language: scenario.language.to_string(),
                 test: test.name.clone().unwrap_or_default(),
-                niceness: niceness,
-                affinity: affinity.clone(),
+                niceness,
+                affinity: affinity_str.clone(),
                 mode,
                 internal_run,
                 time: raw.time,
@@ -283,6 +285,8 @@ impl MeasureCommand {
         cooldown: u64,
         metrics: &str,
         output_dir: &PathBuf,
+        affinity: Option<Vec<usize>>,
+        niceness: Option<i32>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if cooldown > 0 {
             info!("    Cooldown {}ms", cooldown);
@@ -296,7 +300,7 @@ impl MeasureCommand {
             metrics: metrics_str,
             measurement_path,
             mode,
-        } = scenario.exec_command(test, internal_runs, metrics, output_dir)?;
+        } = scenario.exec_command(test, internal_runs, metrics, output_dir, affinity.clone(), niceness)?;
         let child = command.spawn()?;
 
         let output = match mode {
@@ -325,9 +329,15 @@ impl MeasureCommand {
         }
 
         if measurement_path.exists() {
-            if let Err(e) =
-                Self::write_measurements(scenario, test, mode, &measurement_path, output_dir)
-            {
+            if let Err(e) = Self::write_measurements(
+                scenario,
+                test,
+                mode,
+                affinity.as_ref(),
+                niceness,
+                &measurement_path,
+                output_dir,
+            ) {
                 error!("    Failed to write measurements: {}", e);
             }
         }
