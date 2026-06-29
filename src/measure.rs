@@ -29,16 +29,12 @@ impl MeasureCommand {
     pub fn handle(args: Self) -> Result<(), Box<dyn std::error::Error>> {
         let output_dir = args.output.clone().unwrap_or_else(|| PathBuf::from("."));
         std::fs::create_dir_all(&output_dir)?;
+        let output_dir = std::path::absolute(&output_dir)?;
         let metrics = args.metrics_string();
 
         for scenario_path_str in &args.scenarios {
             let scenario_path = scenario_path_str.as_path();
             let mut scenario = Scenario::try_from(scenario_path)?;
-
-            let scenario_dir = scenario.scenario_dir(&output_dir);
-            if scenario_dir.exists() {
-                fs::remove_dir_all(&scenario_dir)?;
-            }
 
             let mut tests = Test::iterate_from_file(scenario_path)?.peekable();
 
@@ -300,19 +296,20 @@ impl MeasureCommand {
             metrics: metrics_str,
             measurement_path,
             mode,
-        } = scenario.exec_command(test, internal_runs, metrics, output_dir, affinity.clone(), niceness)?;
+        } = scenario.exec_command(
+            test,
+            internal_runs,
+            metrics,
+            output_dir,
+            affinity.clone(),
+            niceness,
+        )?;
         let child = command.spawn()?;
 
         let output = match mode {
             MeasurementMode::Process => {
-                unsafe {
-                    std::env::set_var("LG_OUTPUT", &measurement_path);
-                }
                 let _context = Measurement::start(&metrics_str);
                 let result = child.wait_with_output()?;
-                unsafe {
-                    std::env::remove_var("LG_OUTPUT");
-                }
                 result
             }
             MeasurementMode::Internal => child.wait_with_output()?,

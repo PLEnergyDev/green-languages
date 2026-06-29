@@ -288,9 +288,7 @@ impl Scenario {
             .stderr(Stdio::piped())
             .stdin(stdin_config);
 
-        if matches!(mode, MeasurementMode::Internal) {
-            cmd.env("LG_OUTPUT", &measurement_path);
-        }
+        cmd.env("LG_OUTPUT", &measurement_path);
 
         unsafe {
             cmd.pre_exec(move || {
@@ -414,7 +412,7 @@ impl Scenario {
             if let Ok(saved) = fs::read_to_string(&stamp_path) {
                 if saved == fingerprint {
                     return Ok(ScenarioResult::success_with(
-                        "Build Cache Hit!".to_string(),
+                        "Reusing Build Cache".to_string(),
                         String::new(),
                     ));
                 }
