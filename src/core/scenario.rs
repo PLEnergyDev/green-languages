@@ -413,7 +413,10 @@ impl Scenario {
         if stamp_path.exists() {
             if let Ok(saved) = fs::read_to_string(&stamp_path) {
                 if saved == fingerprint {
-                    return Ok(ScenarioResult::success());
+                    return Ok(ScenarioResult::success_with(
+                        "Build Cache Hit!".to_string(),
+                        String::new(),
+                    ));
                 }
             }
         }
