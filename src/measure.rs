@@ -29,7 +29,6 @@ impl MeasureCommand {
     pub fn handle(args: Self) -> Result<(), Box<dyn std::error::Error>> {
         let output_dir = args.output.clone().unwrap_or_else(|| PathBuf::from("."));
         std::fs::create_dir_all(&output_dir)?;
-        let output_dir = std::path::absolute(&output_dir)?;
         let metrics = args.metrics_string();
 
         for scenario_path_str in &args.scenarios {
