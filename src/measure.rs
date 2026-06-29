@@ -307,9 +307,14 @@ impl MeasureCommand {
 
         let output = match mode {
             MeasurementMode::Process => {
+                unsafe {
+                    std::env::set_var("LG_OUTPUT", &measurement_path);
+                }
                 let _context = Measurement::start(&metrics_str);
-                let result = child.wait_with_output()?;
-                result
+                unsafe {
+                    std::env::remove_var("LG_OUTPUT");
+                }
+                child.wait_with_output()?
             }
             MeasurementMode::Internal => child.wait_with_output()?,
         };
